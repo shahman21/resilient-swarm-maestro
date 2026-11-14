@@ -1,0 +1,33 @@
+Background (from the session that started this one):
+Resilient Swarm Maestro is a DurHack 2026 hackathon project by a 3-person team: one physical mBot2 (CyberPi) robot and 4 virtual robots on a laptop dashboard dance to a shared ~97-byte UDP rule packet (`seq`, `step`, `bpm`, `rule`, `notes`, `loss_pct`, `blackout`) sent once per beat by the hub, plus repeats every 150 ms so the robot's 600 ms blackout watchdog doesn't trip at slow tempos. The user is the Lead/Generalist and owns `hub/` (FastAPI + WebSocket `/ws` + UDP broadcaster, Ultraleap hand tracking, Gemini notes/rule refreshed every 8 beats, ElevenLabs voice callouts, Tiger Data/Postgres telemetry). The scaffold is committed and pushed to the private repo shahman21/resilient-swarm-maestro (`main` plus `feat/robot-jasmine`, `feat/ui-marz`, `feat/hub-lead`). The hub and dashboard were tested locally with all services on fallbacks (mock hand, fixed chords, no voice, no DB). `hub/.venv` already has the requirements installed. `.env` exists (copied from `.env.example`) and is gitignored. Target prizes: Neptune North (resilience demo), MLH Gemini, ElevenLabs, Tiger Data and Entire.
+
+Task:
+You're working on the hub part (`hub/`) of Resilient Swarm Maestro on branch `feat/hub-lead`. Read `CLAUDE.md` (sections 5, 6 and 8 especially) and `README.md` first. Stay inside `hub/` unless a change is agreed; `robot/` belongs to Jasmine and `dashboard/` to Marz.
+
+Start by asking the user which of these to do first, then work through them:
+1. **Service check.** The user is pasting API keys into `.env` themselves (never ask for keys in chat, never print them). Start the hub (`cd hub && .venv/bin/uvicorn server:app --host 0.0.0.0 --port 8000`, run in background) and confirm from the startup lines which of Gemini, ElevenLabs and Tiger Data are live. Fix anything that fails. Gemini is called with REST in `hub/ai_services.py` (`GeminiComposer`, model from `GEMINI_MODEL`, default `gemini-2.5-flash`); ElevenLabs uses `eleven_flash_v2_5` and caches mp3s in `hub/.voice_cache/`; Tiger writes to table `swarm_telemetry`.
+2. **Judge demo script.** Add a hub-side demo sequence triggered from the dashboard control message (e.g. `{"demo": true}`) or an HTTP endpoint: about 20 s synced, 60% loss for about 15 s, blackout for about 10 s, then back to 0% for the resync. Voice callouts should fire at each transition (`Hub.check_transitions`). Keep it backward compatible with contract 5B.
+3. **Ultraleap.** Once the user has installed the Ultraleap Hand Tracking software and plugged in the sensor, build `leapc-python-bindings` into `hub/.venv` (steps in README) and tune `hub/leap_tracker.py`: palm height range (`PALM_MIN_MM`/`PALM_MAX_MM`), grab/pinch thresholds. Have the user hold their hand over the sensor while you read the values.
+4. **Tiger Data queries.** Write useful SQL (e.g. `time_bucket` delivery % and phase drift per 10 s, drops per rule) in a new `hub/tiger_queries.sql`, and optionally a `/api/history` endpoint serving them for the dashboard.
+
+Done means: each finished item has been run and checked locally, and changes are committed on `feat/hub-lead` with clear messages. Push only when the user says to.
+
+Shared notes folder for this group of sessions (outside the repo; read siblings' notes there, leave hand-over notes or large findings there instead of pasting them into messages): /Users/adityashah/Library/Application Support/Claude/side-session-notes/local_63cb8182-941a-4f0d-94d9-77dcf7d3d376
+
+---
+
+<cross-session-message from="local_63cb8182-941a-4f0d-94d9-77dcf7d3d376" from-name="Resilient swarm maestro blueprint">
+The user has put their ElevenLabs and Gemini keys into ~/resilient-swarm-maestro/.env (their words: "done"). Please start with item 1, the service check: restart the hub and report which services are live. Don't print the key values. Possible issue: the Gemini key may not be a standard AI Studio key, because it doesn't start with "AIza". If Gemini falls back, tell the user to get a key from aistudio.google.com/apikey. TIGER_DB_URL may still be a placeholder, so if Tiger shows as off, ask the user for the connection string from Tiger Console → service → Connect.
+</cross-session-message>
+
+---
+
+<cross-session-message from="local_63cb8182-941a-4f0d-94d9-77dcf7d3d376" from-name="Resilient swarm maestro blueprint">
+Update: all three values are now really saved in ~/resilient-swarm-maestro/.env. I checked the lengths without printing them: GEMINI_API_KEY is 53 chars, ELEVENLABS_API_KEY 51, TIGER_DB_URL 122. Before this they were still placeholders, so ignore any earlier check that showed them missing. Please restart the hub and run the service check: Gemini, ElevenLabs and Tiger (look for "[tiger] connected" and rows in swarm_telemetry). Don't print the key values.
+</cross-session-message>
+
+---
+
+<cross-session-message from="local_63cb8182-941a-4f0d-94d9-77dcf7d3d376" from-name="Resilient swarm maestro blueprint">
+The Ultraleap is ready, please do step 5 now (build the bindings and tune the hand controls). What I checked: a Leap Motion Controller 2 (USB vendor 0x2936, product 0x1206) is plugged into this Mac. "Ultraleap Hand Tracking.app" is installed in /Applications, and its tracking service (libtrack_server) is running. The LeapC SDK is at /Applications/Ultraleap Hand Tracking.app/Contents/LeapSDK, with libLeapC.dylib under lib/ and leapc_cffi/. Build leapc-python-bindings into hub/.venv using the README steps; the Python is 3.14, so check the cffi build works on it. Then confirm leap_tracker.py starts with "[leap] using Ultraleap" rather than the mock, and tune PALM_MIN_MM/PALM_MAX_MM and the grab/pinch thresholds while the user holds a hand over the sensor. Ask the user, in your session, to move their hand when you need readings. The user is on a network that blocks Tiger's port, so ignore Tiger for now.
+</cross-session-message>
