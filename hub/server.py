@@ -61,6 +61,7 @@ class Hub:
         self.this_beat_delivered = False
         self.delivered_window = deque(maxlen=20)
         self.last_delivered = None  # dict(seq, step, bpm, rule, t)
+        self.last_link = None  # monotonic time of the last send that got through, repeats included
         self.sends = deque(maxlen=200)  # monotonic timestamps of send attempts
         self.telemetry_history = deque(maxlen=60)
         self.robot = None  # latest status from the mBot2
@@ -99,6 +100,7 @@ class Hub:
                 "seq": self.seq, "step": self.step, "bpm": self.bpm,
                 "rule": self.rule, "t": time.monotonic(),
             }
+        self.last_link = time.monotonic()
         self.this_beat_delivered = True
         return True
 
@@ -229,6 +231,8 @@ class Hub:
             "last_delivered": None if not ld else {
                 "seq": ld["seq"], "step": ld["step"], "bpm": ld["bpm"], "rule": ld["rule"],
                 "age_ms": int((now - ld["t"]) * 1000),
+                # what the robot's 600 ms watchdog sees: repeats count, so slow tempos stay synced
+                "link_age_ms": int((now - (self.last_link or ld["t"])) * 1000),
             },
             "robot": None if not self.robot else {
                 **self.robot, "age_ms": int((now - self.robot_seen) * 1000),
