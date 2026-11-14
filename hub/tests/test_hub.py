@@ -222,3 +222,22 @@ def test_gesture_classifier_holds_and_does_not_flicker():
     g.update(0.0, 1.0, 4.0)
     assert g.update(0.0, 1.0, 4.0 + GESTURE_HOLD_S) == "figure8"
     assert (hand_y_to_bpm(-1), hand_y_to_bpm(0.5), hand_y_to_bpm(2)) == (80, 115, 150)
+
+
+def test_link_age_counts_heartbeat_repeats(hub, monkeypatch):
+    """At 80 BPM a beat is 750 ms. Repeats every 150 ms must keep the link fresh,
+    otherwise the dashboard shows AUTONOMOUS at the end of every beat with 0% loss."""
+    clock = [1000.0]
+    monkeypatch.setattr(server.time, "monotonic", lambda: clock[0])
+
+    async def run():
+        hub._new_beat()
+
+    asyncio.run(run())
+    for _ in range(4):  # four repeats, 150 ms apart, same seq
+        clock[0] += 0.15
+        assert hub._send()
+    clock[0] += 0.05
+    ld = hub.state()["last_delivered"]
+    assert ld["age_ms"] >= 640  # beat packet itself is old...
+    assert ld["link_age_ms"] <= 60  # ...but the link is fresh

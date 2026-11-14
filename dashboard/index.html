@@ -171,6 +171,7 @@ class LocalHub {
     this.sends.push(now);
     if (this.blackout || Math.random() * 100 < this.packet_loss_pct) return;
     if (!this.ld || this.ld.seq !== this.seq) this.ld = { seq:this.seq, step:this.step, bpm:this.bpm, rule:this.rule, t:now };
+    this.lastLink = now;
     this.beatDelivered = true;
   }
   tick(now) {
@@ -206,7 +207,7 @@ class LocalHub {
       hand_y:+handY.toFixed(3), hand_spread:+(0.5 + 0.5 * Math.sin((now - this.t0) / 1000 * 2 * Math.PI / 13)).toFixed(3),
       ai_commentary:`Offline sim: swarm ${this.rule} in ${m[0]} ${m[1]} at ${this.bpm} BPM`,
       telemetry_history:this.hist,
-      last_delivered: this.ld && { ...this.ld, age_ms: Math.round(now - this.ld.t) },
+      last_delivered: this.ld && { ...this.ld, age_ms: Math.round(now - this.ld.t), link_age_ms: Math.round(now - this.lastLink) },
       robot:null, music:{ key:m[0], scale:m[1], chords:m[2] }, hand_source:'mock',
       override_rule:this.override_rule, sends_per_sec:this.sends.length,
       beat_phase: Math.min(1, (now - this.beatStart) * this.bpm / 60000),
@@ -290,7 +291,10 @@ function physical(now) {
   }
   if (!ld) return { t: trueT(now), rule, mode: 'auto', real: false };
   const age = ld.age_ms + (now - recvAt);
-  return { t: ld.step + age / beatMs(ld.bpm), rule, mode: (S.blackout || age > 600) ? 'auto' : 'synced', real: false };
+  // Same as the robot's 600 ms watchdog: any packet that got through counts, including
+  // the 150 ms repeats. Without this, beats longer than 600 ms (under 100 BPM) look like loss.
+  const linkAge = (ld.link_age_ms ?? ld.age_ms) + (now - recvAt);
+  return { t: ld.step + age / beatMs(ld.bpm), rule, mode: (S.blackout || linkAge > 600) ? 'auto' : 'synced', real: false };
 }
 
 // ===========================================================================
