@@ -20,6 +20,8 @@ import httpx
 # ---------------------------------------------------------------------------
 
 RULES = ("pulse", "orbit", "figure8")
+# Fast "lite" models first: a phrase is only 8 beats (3 to 6 s), so latency matters most.
+GEMINI_MODELS = ("gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash")
 SEMITONE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 
 FALLBACK_MUSIC = {
@@ -67,9 +69,13 @@ class GeminiComposer:
         self.key = os.getenv("GEMINI_API_KEY", "")
         if self.key.startswith("your_"):
             self.key = ""
-        self.model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        # First entry is tried first. A model that answers 404 (retired / not on this key)
+        # is dropped for the rest of the run and the next one takes over.
+        first = os.getenv("GEMINI_MODEL", "") or GEMINI_MODELS[0]
+        self.models = [first] + [m for m in GEMINI_MODELS if m != first]
         self._busy = False
         self._phrase = 0
+        self.live = False  # True once a real Gemini answer has been accepted
         m = FALLBACK_MUSIC["orbit"]
         self.current = {**m, "notes": chord_to_notes(m["chords"][0]), "rule": None,
                         "commentary": "Swarm orbiting in C major"}
@@ -78,6 +84,25 @@ class GeminiComposer:
     @property
     def enabled(self) -> bool:
         return bool(self.key)
+
+    @property
+    def model(self) -> str:
+        return self.models[0]
+
+    async def _generate(self, body: dict) -> dict:
+        async with httpx.AsyncClient(timeout=6) as client:
+            while True:
+                r = await client.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
+                    json=body, headers={"x-goog-api-key": self.key},
+                )
+                if r.status_code == 404 and len(self.models) > 1:
+                    print(f"[gemini] model {self.models.pop(0)} not available, trying {self.model}")
+                    continue
+                if r.status_code >= 400:
+                    # never echo the request (it carries the key); status + model is enough
+                    raise RuntimeError(f"HTTP {r.status_code} from {self.model}")
+                return json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
 
     def take_pending(self):
         """Hub calls this on the 8-beat boundary. Returns the new phrase or None."""
@@ -116,16 +141,13 @@ class GeminiComposer:
             'Reply as JSON: {"notes":[int,int,int,int],"rule":str,"key":str,"scale":str,'
             '"chords":[str,str,str,str],"commentary":str}'
         )
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         body = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json", "temperature": 0.9},
         }
         try:
-            async with httpx.AsyncClient(timeout=6) as client:
-                r = await client.post(url, json=body, headers={"x-goog-api-key": self.key})
-                r.raise_for_status()
-                data = json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
+            data = await self._generate(body)
+            self.live = True
             notes = clean_notes(data.get("notes"))
             chords = [str(c) for c in data.get("chords", [])][:4]
             if not notes:
@@ -139,7 +161,8 @@ class GeminiComposer:
                 "commentary": str(data.get("commentary", ""))[:120],
             }
         except Exception as exc:
-            print(f"[gemini] falling back: {exc}")
+            print(f"[gemini] falling back: {type(exc).__name__} {exc}")
+            self.live = False
             self.pending = self._fallback(rule, bpm)
         finally:
             self._busy = False
@@ -163,13 +186,18 @@ class VoiceAnnouncer:
         self._last = 0.0
         self.CACHE.mkdir(exist_ok=True)
 
-    def say(self, text: str):
+    def say(self, text: str, force: bool = False):
+        """force=True skips the anti-chatter gap. Mode transitions use it so a rule-change
+        line a second earlier can never swallow "Blackout" or "Swarm resynchronized"."""
         now = time.time()
-        if now - self._last < self.MIN_GAP_S:
+        if not force and now - self._last < self.MIN_GAP_S:
             return
         self._last = now
         print(f"[voice] {text}")
-        asyncio.create_task(self._speak(text))
+        try:
+            asyncio.create_task(self._speak(text))
+        except RuntimeError:
+            pass  # no running event loop (unit tests, shutdown)
 
     async def _speak(self, text: str):
         if self.key and self.player:
@@ -182,7 +210,8 @@ class VoiceAnnouncer:
                             headers={"xi-api-key": self.key, "accept": "audio/mpeg"},
                             json={"text": text, "model_id": "eleven_flash_v2_5"},
                         )
-                        r.raise_for_status()
+                        if r.status_code >= 400:
+                            raise RuntimeError(f"HTTP {r.status_code} {r.text[:160]}")
                         path.write_bytes(r.content)
                 await self._play([self.player, str(path)] if "ffplay" not in self.player
                                  else [self.player, "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)])
@@ -222,8 +251,26 @@ CREATE TABLE IF NOT EXISTS swarm_telemetry (
 """
 
 
+HISTORY_SQL = """
+SELECT time_bucket('10 seconds', time)                               AS bucket,
+       round(100.0 * count(*) FILTER (WHERE delivered) / count(*))   AS delivery_pct,
+       round(avg(phase_drift)::numeric, 2)                           AS phase_drift,
+       count(*)                                                      AS packets
+FROM swarm_telemetry
+WHERE time > now() - make_interval(mins => $1)
+GROUP BY bucket
+ORDER BY bucket;
+"""
+
+
 class TelemetryStore:
+    """Connects in the background and keeps retrying, so a blocked port or a paused
+    database never delays hub startup, and telemetry starts flowing by itself when the
+    laptop moves to a network that can reach Tiger."""
+
     FLUSH_S = 2.0
+    RETRY_S = 15.0
+    MAX_QUEUE = 5000
 
     def __init__(self):
         self.url = os.getenv("TIGER_DB_URL", "")
@@ -231,46 +278,90 @@ class TelemetryStore:
             self.url = ""
         self.pool = None
         self.queue: list[tuple] = []
+        self.status = "off"  # "off" | "connecting" | "connected" | "unreachable"
+        self._tasks: list[asyncio.Task] = []
+
+    @property
+    def enabled(self) -> bool:
+        return self.pool is not None
 
     async def start(self):
         if not self.url:
             print("[tiger] TIGER_DB_URL not set, telemetry kept in memory only")
             return
-        try:
-            import asyncpg
+        self.status = "connecting"
+        self._tasks = [asyncio.create_task(self._connect_loop()),
+                       asyncio.create_task(self._flush_loop())]
 
-            self.pool = await asyncpg.create_pool(self.url, min_size=1, max_size=2, timeout=10)
-            async with self.pool.acquire() as con:
-                await con.execute(CREATE_SQL)
-                try:
-                    await con.execute(
-                        "SELECT create_hypertable('swarm_telemetry', 'time', if_not_exists => TRUE);"
-                    )
-                except Exception:
-                    pass  # plain Postgres without Timescale is fine
-            asyncio.create_task(self._flush_loop())
-            print("[tiger] connected")
-        except Exception as exc:
-            print(f"[tiger] disabled: {exc}")
-            self.pool = None
+    async def stop(self):
+        for t in self._tasks:
+            t.cancel()
+        if self.pool:
+            await self._flush()
+            await self.pool.close()
+
+    async def _connect_loop(self):
+        while self.pool is None:
+            try:
+                import asyncpg
+
+                pool = await asyncpg.create_pool(self.url, min_size=1, max_size=2, timeout=8)
+                async with pool.acquire() as con:
+                    await con.execute(CREATE_SQL)
+                    try:
+                        await con.execute(
+                            "SELECT create_hypertable('swarm_telemetry', 'time', if_not_exists => TRUE);"
+                        )
+                    except Exception:
+                        pass  # plain Postgres without Timescale is fine
+                self.pool = pool
+                self.status = "connected"
+                print("[tiger] connected")
+            except Exception as exc:
+                if self.status != "unreachable":
+                    # exception text only: asyncpg never puts the DSN in it
+                    print(f"[tiger] not reachable ({type(exc).__name__} {exc}); "
+                          f"telemetry in memory, retrying every {self.RETRY_S:.0f}s")
+                self.status = "unreachable"
+                await asyncio.sleep(self.RETRY_S)
 
     def record(self, row: tuple):
-        if self.pool:
-            self.queue.append(row)
+        if self.url and len(self.queue) < self.MAX_QUEUE:
+            self.queue.append((time.time(), *row))
+
+    async def _flush(self):
+        if not self.queue or not self.pool:
+            return
+        rows, self.queue = self.queue, []
+        try:
+            async with self.pool.acquire() as con:
+                await con.executemany(
+                    "INSERT INTO swarm_telemetry (time, seq, step, bpm, rule, packet_loss_pct, blackout, "
+                    "delivered, phase_drift, hand_detected, hand_y, robot_mode) "
+                    "VALUES (to_timestamp($1),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+                    rows,
+                )
+        except Exception as exc:
+            print(f"[tiger] insert failed ({len(rows)} rows dropped): {type(exc).__name__} {exc}")
 
     async def _flush_loop(self):
         while True:
             await asyncio.sleep(self.FLUSH_S)
-            if not self.queue or not self.pool:
-                continue
-            rows, self.queue = self.queue, []
-            try:
-                async with self.pool.acquire() as con:
-                    await con.executemany(
-                        "INSERT INTO swarm_telemetry (seq, step, bpm, rule, packet_loss_pct, blackout, "
-                        "delivered, phase_drift, hand_detected, hand_y, robot_mode) "
-                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-                        rows,
-                    )
-            except Exception as exc:
-                print(f"[tiger] insert failed ({len(rows)} rows dropped): {exc}")
+            await self._flush()
+
+    async def history(self, minutes: int = 15) -> list[dict] | None:
+        """10-second buckets of delivery % and mean phase drift, or None if Tiger is off."""
+        if not self.pool:
+            return None
+        try:
+            async with self.pool.acquire() as con:
+                rows = await con.fetch(HISTORY_SQL, minutes)
+        except Exception as exc:
+            print(f"[tiger] history query failed: {type(exc).__name__} {exc}")
+            return None
+        return [{
+            "t": r["bucket"].astimezone().strftime("%H:%M:%S"),
+            "delivery_pct": int(r["delivery_pct"]),
+            "phase_drift": float(r["phase_drift"] or 0),
+            "packets": r["packets"],
+        } for r in rows]
