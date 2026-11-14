@@ -13,6 +13,11 @@
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; }
   .lbl { color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
   .rule-btn[data-active="true"] { background:#e6e9ef; color:#0b0d12; }
+  #demoStage { font-size:clamp(1.4rem, 3vw, 2.5rem); font-weight:750; color:var(--cyan); }
+  #demoStage[data-fault="true"] { color:var(--amber); }
+  header h1 { font-size:clamp(1.5rem, 3vw, 2.5rem); }
+  header button, #connBadge, #modeBadge { font-size:1rem; }
+  .lbl { font-size:.82rem; }
   input[type=range] { accent-color: var(--red); }
   kbd { background:#252b38; border-radius:4px; padding:0 5px; font-size:11px; }
 </style>
@@ -28,14 +33,13 @@
     <div class="flex items-center gap-2 text-sm">
       <span id="connBadge" class="px-2 py-1 rounded-md bg-gray-700">connecting…</span>
       <span id="modeBadge" class="px-2 py-1 rounded-md bg-gray-700">—</span>
-      <button id="audioBtn" class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200">▶ Start Audio &amp; Demo</button>
-    <button id="runDemoBtn" type="button"
-        class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50"
-        disabled>
-  Run Demo
-</button>
+      <button id="audioBtn" class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200">▶ Start Audio</button>
+      <button id="runDemoBtn" type="button"
+              class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50"
+              disabled>Run Demo</button>
     </div>
   </header>
+  <p id="demoStage" role="status" hidden></p>
 
   <main class="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4">
     <!-- Arena -->
@@ -90,7 +94,10 @@
       </div>
 
       <div class="panel p-4 flex flex-col gap-2">
-        <div class="flex justify-between"><span class="lbl">Delivery % / phase drift (60 s)</span></div>
+        <div class="flex justify-between gap-2">
+          <span class="lbl" id="historyTitle">Delivery % / phase drift (60 s)</span>
+          <span id="historySource" class="lbl" hidden>Tiger Data</span>
+        </div>
         <canvas id="chart" class="w-full h-28"></canvas>
         <div class="flex gap-4 text-xs" style="color:var(--muted)">
           <span><span class="inline-block w-3 h-0.5 align-middle" style="background:var(--green)"></span> delivery %</span>
@@ -208,7 +215,7 @@ class LocalHub {
 // Connection
 // ===========================================================================
 let S = null, recvAt = 0, ws = null, live = false, localHub = null, localTimer = null;
-const WS_URL = (location.protocol.startsWith('http') ? `ws://${location.host}/ws` : 'ws://localhost:8000/ws');
+const WS_URL = (location.protocol.startsWith('http') ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws` : 'ws://localhost:8000/ws');
 
 function connect() {
   try { ws = new WebSocket(WS_URL); } catch { return goOffline(); }
@@ -229,7 +236,9 @@ function sendControl(c) {
   else if (localHub) localHub.apply(c);
 }
 function badge() {
-  document.getElementById('runDemoBtn').disabled = !live;
+  renderDemo(live ? S?.demo_stage : null);
+  if (live) refreshHistory();
+  else history = null;
   const b = document.getElementById('connBadge');
   b.textContent = live ? '● hub live' : '○ offline sim';
   b.style.background = live ? '#14532d' : '#3f3f46';
@@ -465,7 +474,53 @@ function fmtBytes(bps) {
   if (bps >= 1e3) return (bps / 1e3).toFixed(1) + ' kB/s';
   return Math.round(bps) + ' B/s';
 }
+const demoStages = new Map([
+  ['synced', 'STAGE 1/4 · SYNCHRONISED'],
+  ['loss', 'STAGE 2/4 · PACKET LOSS 60%'],
+  ['blackout', 'STAGE 3/4 · BLACKOUT'],
+  ['resync', 'STAGE 4/4 · RESYNCHRONISING']
+]);
+function renderDemo(stage) {
+  const label = demoStages.get(stage);
+  const banner = $('demoStage');
+  const button = $('runDemoBtn');
+  const text = label || '';
+  if (banner.textContent !== text) banner.textContent = text;
+  banner.hidden = !label;
+  banner.dataset.fault = String(stage === 'loss' || stage === 'blackout');
+  button.textContent = label ? 'Cancel Demo' : 'Run Demo';
+  button.disabled = !live;
+}
+
+let history = null;
+let historyRequest = null;
+async function refreshHistory() {
+  if (!live || historyRequest) return;
+  const socket = ws;
+  const request = new AbortController();
+  historyRequest = request;
+  const timeout = setTimeout(() => request.abort(), 5000);
+  try {
+    const response = await fetch('/api/history', { cache: 'no-store', signal: request.signal });
+    if (!response.ok) throw new Error('History unavailable');
+    const data = await response.json();
+    if (!live || ws !== socket) return;
+    const rows = Array.isArray(data.rows) ? data.rows.filter(row =>
+      row && Number.isFinite(row.delivery_pct) && Number.isFinite(row.phase_drift)) : [];
+    history = rows.length >= 2 && Number.isFinite(data.bucket_s) && data.bucket_s > 0
+      ? { ...data, rows }
+      : null;
+  } catch {
+    if (ws === socket) history = null;
+  } finally {
+    clearTimeout(timeout);
+    historyRequest = null;
+  }
+}
+setInterval(refreshHistory, 10000);
+
 function renderPanel(s) {
+  renderDemo(live ? s.demo_stage : null);
   $('bpm').textContent = s.bpm;
   $('rule').textContent = s.rule; $('rule').style.color = RULE_COLOUR[s.rule];
   $('seqstep').textContent = `${s.seq} / ${s.step}`;
@@ -489,36 +544,38 @@ function renderPanel(s) {
   $('bwRule500').textContent = fmtBytes(s.packet_bytes * sps);   // one broadcast reaches everyone
   $('bwStream500').textContent = fmtBytes(500 * 30 * 32);         // ~32 B per x,y,heading update
   if (s.music) $('music').textContent = `${s.music.key} ${s.music.scale} · ${s.music.chords.join(' – ')}`;
-  drawChart(s.telemetry_history || []);
+  $('historyTitle').textContent = history
+    ? `Delivery % / phase drift (${history.bucket_s} s buckets)`
+    : 'Delivery % / phase drift (60 s)';
+  $('historySource').hidden = history?.source !== 'tiger';
+  drawChart(history?.rows || s.telemetry_history || [], history ? history.rows.length : 60);
 }
 
 const ch = $('chart'), cc = ch.getContext('2d');
-function drawChart(hist) {
+function drawChart(hist, slots) {
   const d = devicePixelRatio || 1, r = ch.getBoundingClientRect();
-  if (ch.width !== Math.round(r.width * d)) { ch.width = r.width * d; ch.height = r.height * d; }
+  const width = Math.round(r.width * d), height = Math.round(r.height * d);
+  if (ch.width !== width || ch.height !== height) { ch.width = width; ch.height = height; }
   const W = ch.width, H = ch.height;
   cc.clearRect(0, 0, W, H);
   cc.strokeStyle = '#252b38'; cc.lineWidth = 1;
   [0.25, 0.5, 0.75].forEach(f => { cc.beginPath(); cc.moveTo(0, H * f); cc.lineTo(W, H * f); cc.stroke(); });
   if (hist.length < 2) return;
-  const x = i => (i / 59) * W;
+  const count = Math.max(hist.length, slots, 2);
+  const x = i => (count - hist.length + i) / (count - 1) * W;
   const line = (vals, max, colour) => {
     cc.strokeStyle = colour; cc.lineWidth = 2 * d; cc.beginPath();
     vals.forEach((v, i) => { const y = H - Math.min(1, v / max) * (H - 4) - 2; i ? cc.lineTo(x(i), y) : cc.moveTo(x(i), y); });
     cc.stroke();
   };
-  const off = 60 - hist.length;
-  const pad = arr => Array(off).fill(null).concat(arr);
   const deliv = hist.map(h => h.delivery_pct), drift = hist.map(h => h.phase_drift);
-  cc.save(); cc.translate(x(off), 0); cc.scale((W - x(off)) / W, 1);
   line(deliv, 100, '#2ecc71');
   line(drift, Math.max(4, ...drift), '#ff3b3b');
-  cc.restore();
 }
 
 // controls
 $('runDemoBtn').addEventListener('click', () => {
-  sendControl({ demo: true });
+  if (live) sendControl({ demo: !demoStages.has(S?.demo_stage) });
 });
 $('loss').addEventListener('input', e => { sendControl({ packet_loss_pct: +e.target.value }); $('lossVal').textContent = e.target.value + '%'; });
 $('blackoutBtn').addEventListener('click', () => sendControl({ blackout: !(S && S.blackout) }));
