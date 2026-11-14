@@ -29,6 +29,11 @@
       <span id="connBadge" class="px-2 py-1 rounded-md bg-gray-700">connecting…</span>
       <span id="modeBadge" class="px-2 py-1 rounded-md bg-gray-700">—</span>
       <button id="audioBtn" class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200">▶ Start Audio &amp; Demo</button>
+    <button id="runDemoBtn" type="button"
+        class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50"
+        disabled>
+  Run Demo
+</button>
     </div>
   </header>
 
@@ -224,6 +229,7 @@ function sendControl(c) {
   else if (localHub) localHub.apply(c);
 }
 function badge() {
+  document.getElementById('runDemoBtn').disabled = !live;
   const b = document.getElementById('connBadge');
   b.textContent = live ? '● hub live' : '○ offline sim';
   b.style.background = live ? '#14532d' : '#3f3f46';
@@ -511,6 +517,9 @@ function drawChart(hist) {
 }
 
 // controls
+$('runDemoBtn').addEventListener('click', () => {
+  sendControl({ demo: true });
+});
 $('loss').addEventListener('input', e => { sendControl({ packet_loss_pct: +e.target.value }); $('lossVal').textContent = e.target.value + '%'; });
 $('blackoutBtn').addEventListener('click', () => sendControl({ blackout: !(S && S.blackout) }));
 document.querySelectorAll('.rule-btn').forEach(b => b.addEventListener('click', () => sendControl({ override_rule: b.dataset.rule || null })));
