@@ -75,10 +75,15 @@ class GeminiComposer:
         self.models = [first] + [m for m in GEMINI_MODELS if m != first]
         self._busy = False
         self._phrase = 0
+        # Free-tier keys allow only a few requests a minute. Ask at most every MIN_INTERVAL_S
+        # (phrases in between keep the last Gemini answer) and back off after a 429.
+        self.min_interval = float(os.getenv("GEMINI_MIN_INTERVAL_S", "15"))
+        self._next_call_at = 0.0
         self.live = False  # True once a real Gemini answer has been accepted
         m = FALLBACK_MUSIC["orbit"]
         self.current = {**m, "notes": chord_to_notes(m["chords"][0]), "rule": None,
-                        "commentary": "Swarm orbiting in C major"}
+                        "commentary": "Swarm orbiting in C major", "source": "fallback",
+                        "reason": "Starting phrase", "inputs": None}
         self.pending = None
 
     @property
@@ -113,22 +118,27 @@ class GeminiComposer:
 
     def request(self, rule: str, bpm: int, hand_y: float, hand_velocity: float, hand_spread: float):
         self._phrase += 1
+        inputs = {"bpm": bpm, "hand_y": round(hand_y, 2), "hand_spread": round(hand_spread, 2),
+                  "hand_velocity": round(hand_velocity, 2)}
         if not self.enabled:
-            self.pending = self._fallback(rule, bpm)
+            self.pending = self._fallback(rule, bpm, inputs)
             return
-        if self._busy:
-            return  # previous call still out; keep the current phrase
+        if self._busy or time.monotonic() < self._next_call_at:
+            return  # call still out, or pacing / backing off: keep the current phrase
         self._busy = True
-        asyncio.create_task(self._ask(rule, bpm, hand_y, hand_velocity, hand_spread))
+        self._next_call_at = time.monotonic() + self.min_interval
+        asyncio.create_task(self._ask(rule, bpm, hand_y, hand_velocity, hand_spread, inputs))
 
-    def _fallback(self, rule, bpm):
+    def _fallback(self, rule, bpm, inputs=None):
         m = FALLBACK_MUSIC.get(rule, FALLBACK_MUSIC["orbit"])
         chord = m["chords"][self._phrase % 4]
         mood = "calm" if bpm < 100 else "driving" if bpm < 130 else "frantic"
         return {**m, "notes": chord_to_notes(chord), "rule": None,
-                "commentary": f"Swarm {rule} on {chord} in {m['key']} {m['scale']}, {bpm} BPM, {mood}"}
+                "commentary": f"Swarm {rule} on {chord} in {m['key']} {m['scale']}, {bpm} BPM, {mood}",
+                "source": "fallback", "reason": f"Fixed table: {rule} plays the {chord} chord",
+                "inputs": inputs}
 
-    async def _ask(self, rule, bpm, hand_y, hand_velocity, hand_spread):
+    async def _ask(self, rule, bpm, hand_y, hand_velocity, hand_spread, inputs=None):
         prompt = (
             "You conduct a dancing robot swarm (1 real mBot2, 4 virtual) from a human hand.\n"
             f"Current rule: {rule}. Tempo: {bpm} BPM. Hand height 0-1: {hand_y:.2f}. "
@@ -138,8 +148,10 @@ class GeminiComposer:
             "- rule: one of pulse, orbit, figure8 (pulse = punchy, orbit = flowing, figure8 = playful).\n"
             "- key, scale, and a 4-chord loop with simple names like C, Am, F#m, Bb.\n"
             "- commentary: at most 12 words for a live dashboard.\n"
+            "- reason: at most 14 words on why, tied to what the hand is doing "
+            "(e.g. 'Hand rising fast and open, so a brighter major phrase and figure8').\n"
             'Reply as JSON: {"notes":[int,int,int,int],"rule":str,"key":str,"scale":str,'
-            '"chords":[str,str,str,str],"commentary":str}'
+            '"chords":[str,str,str,str],"commentary":str,"reason":str}'
         )
         body = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -159,11 +171,21 @@ class GeminiComposer:
                 "scale": str(data.get("scale", self.current["scale"])),
                 "chords": chords if len(chords) == 4 else self.current["chords"],
                 "commentary": str(data.get("commentary", ""))[:120],
+                "reason": str(data.get("reason", ""))[:140],
+                "source": "gemini",
+                "inputs": inputs,
             }
         except Exception as exc:
+            if "HTTP 429" in str(exc):
+                # rate limited: wait a minute, and keep the last real Gemini phrase if we have one
+                self._next_call_at = time.monotonic() + 60
+                print("[gemini] rate limited (429), pausing Gemini calls for 60 s")
+                if self.current.get("source") != "gemini":
+                    self.pending = self._fallback(rule, bpm, inputs)
+                return
             print(f"[gemini] falling back: {type(exc).__name__} {exc}")
             self.live = False
-            self.pending = self._fallback(rule, bpm)
+            self.pending = self._fallback(rule, bpm, inputs)
         finally:
             self._busy = False
 

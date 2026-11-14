@@ -51,6 +51,7 @@ class Hub:
         self.rule = "orbit"
         self.notes = [60, 64, 67, 72]
         self.ai_rule = None  # Gemini's rule suggestion for this phrase
+        self.phrase_step = 0  # step at which the current phrase took over
         # judge controls (contract 5B)
         self.packet_loss_pct = 0
         self.blackout = False
@@ -136,6 +137,7 @@ class Hub:
             if phrase:
                 self.notes = phrase["notes"]
                 self.ai_rule = phrase.get("rule")
+                self.phrase_step = self.step
             self.composer.request(self.rule, self.bpm, snap["hand_y"], self.hand_velocity,
                                   snap["hand_spread"])
         new_rule = self.override_rule or snap["gesture_rule"] or self.ai_rule or self.rule
@@ -158,6 +160,29 @@ class Hub:
                 self._send()  # heartbeat repeat of the same packet (same seq)
                 next_hb = now + HEARTBEAT_S
             await asyncio.sleep(max(0.001, min(next_beat, next_hb) - time.monotonic()))
+
+    def ai_state(self, snap) -> dict:
+        """What the AI decided for the current phrase, and whether the swarm is following it."""
+        cur = self.composer.current
+        if self.override_rule:
+            rule_by = "judge"
+        elif snap["gesture_rule"]:
+            rule_by = "hand"
+        elif self.ai_rule and self.ai_rule == self.rule:
+            rule_by = "ai"
+        else:
+            rule_by = "unchanged"
+        return {
+            "source": cur.get("source", "fallback"),
+            "model": self.composer.model if cur.get("source") == "gemini" else None,
+            "rule": cur.get("rule"),
+            "rule_by": rule_by,
+            "notes": self.notes,
+            "key": cur.get("key"), "scale": cur.get("scale"),
+            "reason": cur.get("reason", ""),
+            "inputs": cur.get("inputs"),
+            "phrase_step": self.phrase_step,
+        }
 
     def packet_dict(self) -> dict:
         """Contract 5A. The exact object the robot gets; the dashboard gets the same fields."""
@@ -244,6 +269,7 @@ class Hub:
             "beat_phase": round(min(1.0, (now - self.beat_started) * self.bpm / 60.0), 3),
             "gemini": self.composer.enabled,
             "gemini_live": self.composer.live,
+            "ai": self.ai_state(snap),
             "tiger": self.store.status,
             "demo_stage": self.demo_stage,
         }
