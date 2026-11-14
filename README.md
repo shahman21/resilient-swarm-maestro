@@ -87,7 +87,7 @@ hub/build_leap.sh
 
 The script clones `ultraleap/leapc-python-bindings`, builds it into `hub/.venv` and checks `import leap`. The upstream repo expects LeapC 5; current Ultraleap software ships LeapC 6, so the script patches the library name first (without that the build stops with "No libLeapC.5.dylib found"). The hub prints `[leap] using Ultraleap` when it has the real sensor and `hand_source` is `"leap"` in the state.
 
-Controls: palm height sets BPM (80 to 150) over 320 to 500 mm above the sensor; set `PALM_MIN_MM` / `PALM_MAX_MM` in `.env` if the desk setup changes. Fist = `pulse`, open palm = `orbit`, pinch = `figure8`; hold a gesture for a quarter of a second for it to register. On the dashboard, keys `1` `2` `3` override the rule and `0` hands control back to the gesture.
+Controls: palm height sets BPM (80 to 150) over 150 to 500 mm above the sensor; set `PALM_MIN_MM` / `PALM_MAX_MM` in `.env` if the desk setup changes. Fist = `pulse`, open palm = `orbit`, pinch = `figure8`; hold a gesture for a quarter of a second for it to register. On the dashboard, keys `1` `2` `3` override the rule and `0` hands control back to the gesture.
 
 ## Team
 

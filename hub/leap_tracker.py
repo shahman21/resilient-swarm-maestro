@@ -4,7 +4,7 @@ Runs in a background thread. If the leapc-python-bindings aren't installed or no
 device is connected, falls back to a mock hand (LEAP_MOCK=1) or to "no hand".
 
 Mapping (tuned on the team's Leap Motion Controller 2, desk-mounted, 2026-11-14):
-  palm height 320 mm .. 500 mm  -> hand_y 0.0 .. 1.0  -> bpm 80 .. 150
+  palm height 150 mm .. 500 mm  -> hand_y 0.0 .. 1.0  -> bpm 80 .. 150
   fist  (grab  > 0.8)           -> "pulse"
   pinch (pinch > 0.8, no fist)  -> "figure8"
   open or relaxed hand          -> "orbit"
@@ -21,7 +21,7 @@ import os
 import threading
 import time
 
-PALM_MIN_MM = float(os.getenv("PALM_MIN_MM", "320"))
+PALM_MIN_MM = float(os.getenv("PALM_MIN_MM", "150"))
 PALM_MAX_MM = float(os.getenv("PALM_MAX_MM", "500"))
 GRAB_ON, GRAB_OFF = 0.8, 0.55    # relaxed hands reach about 0.4
 PINCH_ON, PINCH_OFF = 0.8, 0.5
