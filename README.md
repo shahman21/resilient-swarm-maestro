@@ -30,6 +30,7 @@ Everything degrades gracefully:
 
 **Startup check.** The hub prints one line per service, for example `[hub] Gemini on (gemini-3.5-flash-lite), ElevenLabs on, Tiger connecting`, then `[tiger] connected`. Run it with `PYTHONUNBUFFERED=1` if you redirect the output to a file. `GET /api/state` also carries `gemini_live` (a real Gemini answer has arrived) and `tiger` (`off`, `connecting`, `connected` or `unreachable`).
 
+* Gemini pacing: the hub asks Gemini at most every `GEMINI_MIN_INTERVAL_S` seconds (default 15) and pauses for 60 s after a rate-limit (429). Free-tier keys have a daily quota, so leave the hub off when you aren't using it.
 * Gemini: `GEMINI_MODEL` picks the model (default `gemini-3.5-flash-lite`). If a model has been retired the hub moves on to the next one in `GEMINI_MODELS` by itself.
 * Tiger: the hub connects in the background and retries every 15 s, queueing rows meanwhile. Tiger listens on a high port (not 5432), which university and venue Wi-Fi often blocks. If it says `unreachable`, switch to the phone hotspot.
 

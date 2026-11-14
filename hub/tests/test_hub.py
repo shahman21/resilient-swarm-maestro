@@ -241,3 +241,18 @@ def test_link_age_counts_heartbeat_repeats(hub, monkeypatch):
     ld = hub.state()["last_delivered"]
     assert ld["age_ms"] >= 640  # beat packet itself is old...
     assert ld["link_age_ms"] <= 60  # ...but the link is fresh
+
+
+def test_ai_state_reports_source_reason_and_who_set_the_rule(hub):
+    async def run():
+        for _ in range(17):  # two phrase boundaries: request at 8, apply at 16
+            hub._new_beat()
+
+    asyncio.run(run())
+    ai = hub.state()["ai"]
+    assert ai["source"] in ("gemini", "fallback")
+    assert ai["reason"]
+    assert ai["notes"] == hub.notes and ai["phrase_step"] == 16
+    assert ai["inputs"] and 80 <= ai["inputs"]["bpm"] <= 150
+    hub.apply_controls({"override_rule": "pulse"})
+    assert hub.state()["ai"]["rule_by"] == "judge"
