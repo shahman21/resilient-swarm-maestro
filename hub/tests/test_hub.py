@@ -203,3 +203,22 @@ def test_history_falls_back_to_memory_in_10s_buckets(hub):
     out = asyncio.run(hub.history())
     assert out["source"] == "memory" and out["bucket_s"] == 10
     assert [(r["t"], r["delivery_pct"]) for r in out["rows"]] == [("16:05:00", 90), ("16:05:10", 50)]
+
+
+def test_gesture_classifier_holds_and_does_not_flicker():
+    from leap_tracker import GESTURE_HOLD_S, GestureClassifier, hand_y_to_bpm
+
+    g = GestureClassifier()
+    assert g.update(0.0, 0.0, 0.0) == "orbit"
+    # closing into a fist: pinch rises first, for less than the hold time
+    assert g.update(0.2, 0.9, 1.00) == "orbit"
+    assert g.update(1.0, 1.0, 1.10) == "orbit"
+    assert g.update(1.0, 1.0, 1.10 + GESTURE_HOLD_S) == "pulse"
+    # a slightly loosened fist stays a fist (hysteresis); a relaxed hand does not
+    assert g.update(0.6, 0.3, 2.0) == "pulse"
+    g.update(0.4, 0.0, 3.0)
+    assert g.update(0.4, 0.0, 3.0 + GESTURE_HOLD_S) == "orbit"
+    # pinch with open fingers
+    g.update(0.0, 1.0, 4.0)
+    assert g.update(0.0, 1.0, 4.0 + GESTURE_HOLD_S) == "figure8"
+    assert (hand_y_to_bpm(-1), hand_y_to_bpm(0.5), hand_y_to_bpm(2)) == (80, 115, 150)

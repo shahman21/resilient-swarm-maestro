@@ -79,17 +79,15 @@ cd hub && .venv/bin/python -m pytest -q
 
 ## Ultraleap
 
-The Python bindings aren't on PyPI. Install the Ultraleap Gemini tracking software, then:
+The Python bindings aren't on PyPI. Install the Ultraleap Hand Tracking software, plug in the sensor, then:
 
 ```bash
-git clone https://github.com/ultraleap/leapc-python-bindings
-cd leapc-python-bindings
-pip install -r requirements.txt
-python -m build leapc-cffi && pip install leapc-cffi/dist/leapc_cffi-*.tar.gz
-pip install -e leapc-python-api
+hub/build_leap.sh
 ```
 
-Controls: palm height sets BPM (80 to 150). Fist = `pulse`, open palm = `orbit`, pinch = `figure8`. On the dashboard, keys `1` `2` `3` override the rule and `0` hands control back to the gesture.
+The script clones `ultraleap/leapc-python-bindings`, builds it into `hub/.venv` and checks `import leap`. The upstream repo expects LeapC 5; current Ultraleap software ships LeapC 6, so the script patches the library name first (without that the build stops with "No libLeapC.5.dylib found"). The hub prints `[leap] using Ultraleap` when it has the real sensor and `hand_source` is `"leap"` in the state.
+
+Controls: palm height sets BPM (80 to 150) over 320 to 500 mm above the sensor; set `PALM_MIN_MM` / `PALM_MAX_MM` in `.env` if the desk setup changes. Fist = `pulse`, open palm = `orbit`, pinch = `figure8`; hold a gesture for a quarter of a second for it to register. On the dashboard, keys `1` `2` `3` override the rule and `0` hands control back to the gesture.
 
 ## Team
 

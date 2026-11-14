@@ -3,11 +3,17 @@
 Runs in a background thread. If the leapc-python-bindings aren't installed or no
 device is connected, falls back to a mock hand (LEAP_MOCK=1) or to "no hand".
 
-Mapping:
-  palm height 100 mm .. 400 mm  -> hand_y 0.0 .. 1.0  -> bpm 80 .. 150
+Mapping (tuned on the team's Leap Motion Controller 2, desk-mounted, 2026-11-14):
+  palm height 320 mm .. 500 mm  -> hand_y 0.0 .. 1.0  -> bpm 80 .. 150
   fist  (grab  > 0.8)           -> "pulse"
-  pinch (pinch > 0.8)           -> "figure8"
-  open palm                     -> "orbit"
+  pinch (pinch > 0.8, no fist)  -> "figure8"
+  open or relaxed hand          -> "orbit"
+A gesture has to hold for GESTURE_HOLD_S before the rule changes, and lets go at a lower
+threshold than it engages at, so closing into a fist never flickers through "pinch".
+
+Measured: open hand grab 0.00 / pinch 0.00, relaxed hand grab up to 0.41, fist grab 1.00
+(and pinch 1.00, which is why fist is checked first), pinch pose pinch 1.00 / grab 0.00.
+Override the height range for another desk with PALM_MIN_MM / PALM_MAX_MM in .env.
 """
 
 import math
@@ -15,8 +21,11 @@ import os
 import threading
 import time
 
-PALM_MIN_MM = 100.0
-PALM_MAX_MM = 400.0
+PALM_MIN_MM = float(os.getenv("PALM_MIN_MM", "320"))
+PALM_MAX_MM = float(os.getenv("PALM_MAX_MM", "500"))
+GRAB_ON, GRAB_OFF = 0.8, 0.55    # relaxed hands reach about 0.4
+PINCH_ON, PINCH_OFF = 0.8, 0.5
+GESTURE_HOLD_S = 0.25
 BPM_MIN = 80
 BPM_MAX = 150
 HAND_TIMEOUT_S = 0.5
@@ -25,6 +34,28 @@ HAND_TIMEOUT_S = 0.5
 def hand_y_to_bpm(hand_y: float) -> int:
     hand_y = max(0.0, min(1.0, hand_y))
     return int(round(BPM_MIN + hand_y * (BPM_MAX - BPM_MIN)))
+
+
+class GestureClassifier:
+    """grab / pinch strengths -> rule, with hysteresis and a short hold time."""
+
+    def __init__(self):
+        self.rule = "orbit"
+        self._candidate = "orbit"
+        self._since = 0.0
+
+    def update(self, grab: float, pinch: float, now: float) -> str:
+        if grab > GRAB_ON or (self.rule == "pulse" and grab > GRAB_OFF):
+            want = "pulse"
+        elif pinch > PINCH_ON or (self.rule == "figure8" and pinch > PINCH_OFF and grab <= GRAB_ON):
+            want = "figure8"
+        else:
+            want = "orbit"
+        if want != self._candidate:
+            self._candidate, self._since = want, now
+        if want != self.rule and now - self._since >= GESTURE_HOLD_S:
+            self.rule = want
+        return self.rule
 
 
 class LeapTracker:
@@ -72,6 +103,7 @@ class LeapTracker:
             return False
 
         tracker = self
+        gestures = GestureClassifier()
 
         class _Listener(leap.Listener):
             def on_connection_event(self, event):
@@ -85,12 +117,7 @@ class LeapTracker:
                 norm = (y_mm - PALM_MIN_MM) / (PALM_MAX_MM - PALM_MIN_MM)
                 grab = getattr(hand, "grab_strength", 0.0)
                 pinch = getattr(hand, "pinch_strength", 0.0)
-                if grab > 0.8:
-                    rule = "pulse"
-                elif pinch > 0.8:
-                    rule = "figure8"
-                else:
-                    rule = "orbit"
+                rule = gestures.update(grab, pinch, time.time())
                 with tracker._lock:
                     # light smoothing so BPM doesn't jitter
                     tracker.hand_y = 0.8 * tracker.hand_y + 0.2 * max(0.0, min(1.0, norm))
