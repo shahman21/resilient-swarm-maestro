@@ -34,6 +34,9 @@
       <span id="connBadge" class="px-2 py-1 rounded-md bg-gray-700">connecting…</span>
       <span id="modeBadge" class="px-2 py-1 rounded-md bg-gray-700">—</span>
       <button id="audioBtn" class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200">▶ Start Audio</button>
+      <audio id="demoMusic" src="assets/demo-music.m4a" preload="none" loop></audio>
+      <button id="musicBtn" type="button"
+              class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200">Play Music</button>
       <button id="runDemoBtn" type="button"
               class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50"
               disabled>Run Demo</button>
@@ -327,6 +330,60 @@ function drawRobot(p, colour, opts = {}) {
   }
 }
 
+const fibreColours = [
+  ['#fff38a', '#ff529e'],
+  ['#c6ff9a', '#23dfb2'],
+  ['#ffd6ff', '#b362ff'],
+  ['#9cf7ff', '#458dff']
+];
+
+function drawFibreRobot(position, index, now, beatPhase, scale) {
+  const time = now / 1000;
+  const pulse = Math.exp(-5 * beatPhase);
+  const [inner, outer] = fibreColours[index - 1];
+  const radius = (32 + 12 * pulse) * scale;
+
+  ctx.save();
+  ctx.translate(position.sx, position.sy);
+  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+  core.addColorStop(0, inner + 'cf');
+  core.addColorStop(0.55, outer + '65');
+  core.addColorStop(1, outer + '00');
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Stable strand offsets make the fibres sway smoothly between beats.
+  for (let i = 0; i < 120; i++) {
+    const angle = i / 120 * Math.PI * 2;
+    const seed = i * 2.39996 + index;
+    const length = radius * (0.85 + 0.35 * Math.sin(seed));
+    const sway = 0.23 * Math.sin(time * 2.4 + seed);
+    const tip = length * (1 + 0.14 * Math.sin(angle * 3 + time * 1.2));
+    const x = Math.cos(angle), y = Math.sin(angle);
+    const highlight = i % 4 === 0;
+
+    ctx.strokeStyle = highlight ? inner : outer;
+    ctx.globalAlpha = 0.35 + 0.30 * pulse;
+    ctx.lineWidth = (highlight ? 1.1 : 0.65) * scale;
+    ctx.beginPath();
+    ctx.moveTo(x * radius * 0.25, y * radius * 0.25);
+    ctx.quadraticCurveTo(
+      x * tip * 0.75, y * tip * 0.75,
+      Math.cos(angle + sway) * tip, Math.sin(angle + sway) * tip
+    );
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#e6e9ef';
+  ctx.font = `${12 * scale}px ui-sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`virtual ${index}`, 0, 62 * scale);
+  ctx.restore();
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
   if (!S) return;
@@ -401,7 +458,7 @@ function frame(now) {
   }
 
   for (let i = 1; i < N; i++) {
-    drawRobot({ ...toScreen(disp[i]), h: disp[i].h }, swarmColour, { size: 14 * d, label: `virtual ${i}`, glow: 1 - fBeat * 0.6 });
+    drawFibreRobot(toScreen(disp[i]), i, now, fBeat, d);
   }
   const fPh = ph.t - Math.floor(ph.t);
   drawRobot(pS, physLed, { size: 20 * d, label: ph.real ? 'mBot2 (physical)' : 'mBot2 (estimated)', glow: 1.4 - fPh * 0.8 });
@@ -598,6 +655,24 @@ addEventListener('keydown', e => {
 // In sync they land together; under packet loss you hear them phase apart.
 // ===========================================================================
 let AC = null, master = null;
+const demoMusic = $('demoMusic');
+const musicButton = $('musicBtn');
+musicButton.addEventListener('click', async () => {
+  if (!demoMusic.paused) {
+    demoMusic.pause();
+    return;
+  }
+  try {
+    await demoMusic.play();
+  } catch {
+    musicButton.textContent = 'Retry Music';
+  }
+});
+demoMusic.addEventListener('play', () => { musicButton.textContent = 'Pause Music'; });
+for (const event of ['pause', 'ended']) {
+  demoMusic.addEventListener(event, () => { musicButton.textContent = 'Play Music'; });
+}
+
 $('audioBtn').addEventListener('click', () => {
   if (!AC) {
     AC = new AudioContext(); master = AC.createGain(); master.gain.value = 0.5; master.connect(AC.destination);
