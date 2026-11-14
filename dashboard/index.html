@@ -34,9 +34,14 @@
       <span id="connBadge" class="px-2 py-1 rounded-md bg-gray-700">connecting…</span>
       <span id="modeBadge" class="px-2 py-1 rounded-md bg-gray-700">—</span>
       <button id="audioBtn" class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200">▶ Start Audio</button>
-      <audio id="demoMusic" src="assets/demo-music.m4a" preload="none" loop></audio>
-      <button id="musicBtn" type="button"
-              class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200">Play Music</button>
+      <label class="flex items-center gap-2" for="timbreSelect">
+        Timbre
+        <select id="timbreSelect" class="rounded-md bg-gray-800 px-3 py-1.5 text-white">
+          <option value="bright">Bright Synth</option>
+          <option value="soft">Soft Flute</option>
+          <option value="retro">Retro Arcade</option>
+        </select>
+      </label>
       <button id="runDemoBtn" type="button"
               class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50"
               disabled>Run Demo</button>
@@ -659,31 +664,46 @@ addEventListener('keydown', e => {
 // In sync they land together; under packet loss you hear them phase apart.
 // ===========================================================================
 let AC = null, master = null;
-const demoMusic = $('demoMusic');
-const musicButton = $('musicBtn');
-musicButton.addEventListener('click', async () => {
-  if (!demoMusic.paused) {
-    demoMusic.pause();
-    return;
-  }
-  try {
-    await demoMusic.play();
-  } catch {
-    musicButton.textContent = 'Retry Music';
-  }
-});
-demoMusic.addEventListener('play', () => { musicButton.textContent = 'Pause Music'; });
-for (const event of ['pause', 'ended']) {
-  demoMusic.addEventListener(event, () => { musicButton.textContent = 'Play Music'; });
+const BACKGROUND_BPM = 120;
+let drumTimer = null;
+let drumBeat = 0;
+
+function playBackgroundBeat() {
+  const beatInBar = drumBeat % 4;
+  if (beatInBar === 0 || beatInBar === 2) kick();
+  hat(beatInBar % 2 === 0 ? 0.035 : 0.07);
+  drumBeat += 1;
 }
 
-$('audioBtn').addEventListener('click', () => {
-  if (!AC) {
-    AC = new AudioContext(); master = AC.createGain(); master.gain.value = 0.5; master.connect(AC.destination);
-    $('audioBtn').textContent = '🔊 Audio on (click to mute)';
-    sfxChime();
-  } else if (AC.state === 'running') { AC.suspend(); $('audioBtn').textContent = '🔈 Muted'; }
-  else { AC.resume(); $('audioBtn').textContent = '🔊 Audio on (click to mute)'; }
+$('audioBtn').addEventListener('click', async () => {
+  const button = $('audioBtn');
+  button.disabled = true;
+  try {
+    if (drumTimer !== null) {
+      await AC.suspend();
+      clearInterval(drumTimer);
+      drumTimer = null;
+      button.textContent = '🔈 Muted';
+      return;
+    }
+
+    if (!AC) {
+      AC = new AudioContext();
+      master = AC.createGain();
+      master.gain.value = 0.5;
+      master.connect(AC.destination);
+    }
+
+    await AC.resume();
+    drumBeat = 0;
+    playBackgroundBeat();
+    drumTimer = setInterval(playBackgroundBeat, 60000 / BACKGROUND_BPM);
+    button.textContent = '🔊 Audio on (click to mute)';
+  } catch {
+    button.textContent = 'Audio unavailable · click to retry';
+  } finally {
+    button.disabled = false;
+  }
 });
 
 const SEMI = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
@@ -723,13 +743,18 @@ function hat(vol = 0.08) {
 // Clean synth voice: two detuned oscillators through a closing low-pass
 function synthNote(freq, dur, vol = 0.18) {
   if (!AC || AC.state !== 'running') return;
+  const waveform = {
+    bright: 'sawtooth',
+    soft: 'sine',
+    retro: 'square',
+  }[$('timbreSelect').value] || 'sawtooth';
   const t0 = AC.currentTime, f = AC.createBiquadFilter(), g = AC.createGain();
   f.type = 'lowpass'; f.Q.value = 4;
   f.frequency.setValueAtTime(freq * 8, t0); f.frequency.exponentialRampToValueAtTime(freq * 1.5, t0 + dur);
   g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   [-4, 4].forEach(cents => {
-    const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = freq; o.detune.value = cents;
+    const o = AC.createOscillator(); o.type = waveform; o.frequency.value = freq; o.detune.value = cents;
     o.connect(f); o.start(t0); o.stop(t0 + dur + 0.05);
   });
   f.connect(g).connect(master);
@@ -739,8 +764,6 @@ function onSwarmBeat(s) {
   const notes = (s.notes && s.notes.length) ? s.notes : [60, 64, 67, 72];
   const n = notes[s.step % notes.length], bm = beatMs(s.bpm) / 1000;
   synthNote(hz(n), Math.min(0.9, bm * 0.9));
-  if (s.step % 4 === 0) { kick(); tone(hz(notes[0] - 12), bm * 3.5, 'triangle', 0.06); }
-  hat(s.step % 2 ? 0.07 : 0.035);
 }
 // The real robot's own beat: only audible when it has drifted, so you hear the phasing
 function onPhysicalBeat(step, drift) {
