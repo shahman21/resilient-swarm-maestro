@@ -24,14 +24,24 @@ except ImportError:
     import socket
 
 # ---- config (do not commit real hotspot details) --------------------------
-WIFI_SSID = "YOUR_HOTSPOT_NAME"
-WIFI_PASSWORD = "YOUR_HOTSPOT_PASSWORD"
+WIFI_SSID = ""              # TODO: fill in your 2.4GHz hotspot name (do not commit)
+WIFI_PASSWORD = ""          # TODO: fill in hotspot password (do not commit)
 UDP_PORT = 5005
 STATUS_PORT = 5006
 WATCHDOG_MS = 600
 OBSTACLE_CM = 15
 DRIVE_RPM = 40          # base wheel speed; keep low on a table
 STATUS_EVERY_MS = 500
+USE_TAPE = False        # False = floor demo, no black-tape boundary
+# Offline interaction (AUTONOMOUS mode only): clap = next rule, cover the CyberPi = spin
+RULES = ("pulse", "orbit", "figure8")
+CLAP_LEVEL = 70         # loudness 0-100 that counts as a clap; raise if it changes rule by itself
+CLAP_GAP_MS = 800       # ignore claps closer together than this
+BEEP_GUARD_MS = 150     # ignore the microphone right after our own buzzer note
+COVER_RATIO = 0.35      # covered = light below 35% of the room light measured at start-up
+COVER_HOLD_MS = 300
+SPIN_MS = 1200
+MY_IP = ""              # filled in after Wi-Fi connects; kept on the status screen
 
 # LED colour matches the dashboard beat ring: cyan = SYNCED, amber = packet loss / blackout
 CYAN = (0, 220, 255)      # #00DCFF
@@ -41,6 +51,7 @@ RED = (255, 0, 0)
 
 # ---- small helpers --------------------------------------------------------
 _warned = {}
+_last_beep = [0]
 
 
 def warn_once(key, exc):
@@ -90,6 +101,50 @@ def beep(freq, secs=NOTE_SECS):
         cyberpi.audio.play_tone(freq, secs)  # blocks for `secs`, keep it short
     except Exception as e:
         warn_once("buzzer", e)
+    _last_beep[0] = now_ms()
+
+
+def measure_room_light():
+    try:
+        total = 0
+        for _ in range(5):
+            total += cyberpi.get_bri()
+            time.sleep(0.1)
+        return max(total / 5, 5)
+    except Exception as e:
+        warn_once("light", e)
+        return 50
+
+
+def local_event(st):
+    """AUTONOMOUS mode only. Returns "clap", "cover" or None."""
+    try:
+        loud = cyberpi.get_loudness()
+    except Exception as e:
+        warn_once("loudness", e)
+        loud = 0
+    was_quiet = st.last_loud < CLAP_LEVEL - 20
+    st.last_loud = loud
+    if (loud >= CLAP_LEVEL and was_quiet and since(_last_beep[0]) > BEEP_GUARD_MS
+            and since(st.last_clap) > CLAP_GAP_MS):
+        st.last_clap = now_ms()
+        return "clap"
+    try:
+        light = cyberpi.get_bri()
+    except Exception as e:
+        warn_once("light", e)
+        return None
+    st.last_light = light
+    if light < st.room_light * COVER_RATIO:
+        if st.cover_since is None:
+            st.cover_since = now_ms()
+        if not st.covered and since(st.cover_since) > COVER_HOLD_MS:
+            st.covered = True
+            return "cover"
+    elif light > st.room_light * 0.6:
+        st.cover_since = None
+        st.covered = False
+    return None
 
 
 def distance_cm():
@@ -103,6 +158,8 @@ def distance_cm():
 
 def on_tape():
     """True if any Quad-RGB probe sees the black boundary tape."""
+    if not USE_TAPE:
+        return False
     try:
         # bitmask of probes over a line, 0 = none. VERIFY: some firmware uses
         # mbuild.quad_rgb_sensor.is_line("any", 1) instead.
@@ -123,6 +180,7 @@ def show(lines):
 
 # ---- networking -----------------------------------------------------------
 def connect_wifi():
+    global MY_IP
     show(["Swarm Maestro", "Wi-Fi..."])
     leds((40, 40, 40))
     try:
@@ -143,7 +201,9 @@ def connect_wifi():
         ip = network.WLAN(network.STA_IF).ifconfig()[0]
     except Exception:
         pass
+    MY_IP = ip
     show(["Swarm Maestro", "Wi-Fi " + ("OK" if ok else "FAILED"), ip])
+    time.sleep(3)           # leave the IP readable before the status screen takes over
     return ok
 
 
@@ -193,6 +253,13 @@ class State:
         self.hub_addr = None
         self.escape_until = 0       # safety manoeuvre end time
         self.escape_turn = 1
+        self.spin_until = 0         # "cover the light" spin end time
+        self.room_light = 50
+        self.last_light = 0
+        self.last_loud = 0
+        self.last_clap = now_ms()
+        self.cover_since = None
+        self.covered = False
 
     def beat_ms(self):
         return int(60000 / max(30, self.bpm))
@@ -239,6 +306,7 @@ def main():
     connect_wifi()
     sock = open_socket()
     st = State()
+    st.room_light = measure_room_light()   # don't cover the CyberPi while it starts up
     last_status = now_ms()
     last_screen = now_ms()
     current_drive = (0, 0)
@@ -268,6 +336,18 @@ def main():
             if mode == "auto":
                 leds(AMBER)
 
+        # 2b. offline interaction: only when the hub is silent
+        if st.mode == "auto":
+            ev = local_event(st)
+            if ev == "clap":
+                st.rule = RULES[(RULES.index(st.rule) + 1) % 3] if st.rule in RULES else "pulse"
+                show(["AUTO: clap", "-> " + st.rule])
+                last_screen = now_ms()
+            elif ev == "cover":
+                st.spin_until = time.ticks_add(now_ms(), SPIN_MS)
+                show(["AUTO: covered", "spin!"])
+                last_screen = now_ms()
+
         # 3. internal clock: advance beat even with no packets
         if time.ticks_diff(now_ms(), st.next_beat) >= 0:
             st.step += 1
@@ -285,6 +365,8 @@ def main():
             st.escape_turn = -st.escape_turn
             st.escape_until = time.ticks_add(now_ms(), 700)   # 350 ms reverse, 350 ms spin
             want = (-DRIVE_RPM, -DRIVE_RPM)
+        elif st.mode == "auto" and since(st.spin_until) < 0:
+            want = (DRIVE_RPM, -DRIVE_RPM)                    # spin on the spot
         else:
             want = choreography(st.rule, st.step % 4)
         if want != current_drive:
@@ -305,7 +387,9 @@ def main():
             last_screen = now_ms()
             show([("SYNC " if st.mode == "synced" else "AUTO ") + st.rule,
                   "bpm %d step %d" % (st.bpm, st.step),
-                  "missed %d loss %d%%" % (st.missed, st.loss_pct)])
+                  "missed %d loss %d%%" % (st.missed, st.loss_pct),
+                  MY_IP or "no IP",
+                  "loud %d light %d/%d" % (st.last_loud, st.last_light, st.room_light)])
 
         time.sleep(0.005)
 
