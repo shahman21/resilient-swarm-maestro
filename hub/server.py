@@ -33,6 +33,13 @@ UDP_PORT = int(os.getenv("UDP_PORT", "5005"))
 STATUS_PORT = int(os.getenv("STATUS_PORT", "5006"))
 HEARTBEAT_S = int(os.getenv("HEARTBEAT_MS", "150")) / 1000.0
 RULES = ("pulse", "orbit", "figure8")
+# Judge demo: (stage, seconds, packet_loss_pct, blackout). Runs once, then hands back control.
+DEMO_STAGES = (
+    ("synced", 20.0, 0, False),
+    ("loss", 15.0, 60, False),
+    ("blackout", 10.0, 60, True),
+    ("resync", 8.0, 0, False),
+)
 
 
 class Hub:
@@ -64,6 +71,9 @@ class Hub:
         self.hand_velocity = 0.0
         self._was_lossy = False
         self._was_blackout = False
+        self.demo_stage = None  # None | "synced" | "loss" | "blackout" | "resync"
+        self.demo_scale = float(os.getenv("DEMO_TIME_SCALE", "1"))  # <1 speeds the demo up (tests)
+        self._demo_task = None
 
         self.leap = LeapTracker()
         self.composer = GeminiComposer()
@@ -191,12 +201,12 @@ class Hub:
     def check_transitions(self):
         lossy = self.packet_loss_pct >= 50
         if self.blackout and not self._was_blackout:
-            self.voice.say("Blackout. Autonomy engaged.")
+            self.voice.say("Blackout. Autonomy engaged.", force=True)
         elif lossy and not self._was_lossy and not self.blackout:
-            self.voice.say("Packet loss detected. Robots running on shared rules.")
+            self.voice.say("Packet loss detected. Robots running on shared rules.", force=True)
         elif (self._was_blackout and not self.blackout) or (self._was_lossy and not lossy):
             if not self.blackout and not lossy:
-                self.voice.say("Swarm resynchronized.")
+                self.voice.say("Swarm resynchronized.", force=True)
         self._was_lossy, self._was_blackout = lossy, self.blackout
 
     def state(self) -> dict:
@@ -229,6 +239,9 @@ class Hub:
             "sends_per_sec": recent_sends,
             "beat_phase": round(min(1.0, (now - self.beat_started) * self.bpm / 60.0), 3),
             "gemini": self.composer.enabled,
+            "gemini_live": self.composer.live,
+            "tiger": self.store.status,
+            "demo_stage": self.demo_stage,
         }
 
     async def broadcast_loop(self):
@@ -247,13 +260,68 @@ class Hub:
             await asyncio.sleep(0.1)
 
     def apply_controls(self, data: dict):
+        """Judge controls (contract 5B). Each field is optional and checked on its own, so one
+        bad value never blocks the others."""
+        if not isinstance(data, dict):
+            return
         if "packet_loss_pct" in data:
-            self.packet_loss_pct = max(0, min(100, int(data["packet_loss_pct"])))
-        if "blackout" in data:
-            self.blackout = bool(data["blackout"])
+            v = data["packet_loss_pct"]
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v:
+                self.packet_loss_pct = int(max(0, min(100, v)))
+        if isinstance(data.get("blackout"), bool):
+            self.blackout = data["blackout"]
         if "override_rule" in data:
             r = data["override_rule"]
-            self.override_rule = r if r in RULES else None
+            self.override_rule = r if isinstance(r, str) and r in RULES else None
+        if isinstance(data.get("demo"), bool):
+            self.start_demo() if data["demo"] else self.stop_demo()
+
+    # ---- judge demo --------------------------------------------------
+    def start_demo(self) -> bool:
+        """Start the scripted sequence. Returns False if one is already running."""
+        if self._demo_task and not self._demo_task.done():
+            return False
+        self._demo_task = asyncio.create_task(self._run_demo())
+        return True
+
+    def stop_demo(self) -> bool:
+        if self._demo_task and not self._demo_task.done():
+            self._demo_task.cancel()
+            return True
+        return False
+
+    async def _run_demo(self):
+        print("[demo] started")
+        try:
+            for stage, seconds, loss, blackout in DEMO_STAGES:
+                self.demo_stage = stage
+                self.packet_loss_pct, self.blackout = loss, blackout
+                self.check_transitions()  # voice callout right on the transition
+                print(f"[demo] {stage}: loss {loss}%, blackout {blackout}, {seconds:.0f}s")
+                await asyncio.sleep(seconds * self.demo_scale)
+            print("[demo] finished")
+        except asyncio.CancelledError:
+            print("[demo] cancelled")
+        finally:
+            # always leave the swarm connected, however the demo ended
+            self.demo_stage = None
+            self.packet_loss_pct, self.blackout = 0, False
+            self.check_transitions()
+
+    async def history(self) -> dict:
+        """10 s buckets of delivery % and phase drift: from Tiger, else from memory."""
+        rows = await self.store.history(15)
+        if rows is not None:
+            return {"source": "tiger", "bucket_s": 10, "rows": rows}
+        buckets: dict[str, list] = {}
+        for h in self.telemetry_history:  # 1 Hz samples, last 60 s
+            buckets.setdefault(h["t"][:7] + "0", []).append(h)
+        return {"source": "memory", "bucket_s": 10, "rows": [{
+            "t": t,
+            "delivery_pct": int(round(sum(h["delivery_pct"] for h in hs) / len(hs))),
+            "phase_drift": round(sum(h["phase_drift"] for h in hs) / len(hs), 2),
+            "packets": None,
+        } for t, hs in buckets.items()]}
 
     def on_robot_status(self, data: bytes, addr):
         try:
@@ -287,12 +355,14 @@ async def lifespan(app: FastAPI):
     )
     tasks = [asyncio.create_task(hub.beat_loop()), asyncio.create_task(hub.broadcast_loop())]
     print(f"[hub] sending rule packets to {MBOT_IP}:{UDP_PORT}, robot status on :{STATUS_PORT}")
-    print(f"[hub] Gemini {'on' if hub.composer.enabled else 'off (fallback chords)'}, "
-          f"ElevenLabs {'on' if hub.voice.key else 'off'}")
+    print(f"[hub] Gemini {'on (' + hub.composer.model + ')' if hub.composer.enabled else 'off (fallback chords)'}, "
+          f"ElevenLabs {'on' if hub.voice.key else 'off'}, Tiger {hub.store.status}")
     yield
+    hub.stop_demo()
     for t in tasks:
         t.cancel()
     transport.close()
+    await hub.store.stop()
     hub.leap.stop()
 
 
@@ -311,6 +381,8 @@ async def ws_endpoint(ws: WebSocket):
                 hub.apply_controls(json.loads(text))
             except (ValueError, TypeError):
                 pass
+            else:
+                hub.check_transitions()
     except WebSocketDisconnect:
         pass
     finally:
@@ -320,6 +392,20 @@ async def ws_endpoint(ws: WebSocket):
 @app.get("/api/state")
 def get_state():
     return hub.state()
+
+
+@app.post("/api/demo")
+async def post_demo(stop: bool = False):
+    """POST /api/demo starts the judge demo, POST /api/demo?stop=true cancels it."""
+    changed = hub.stop_demo() if stop else hub.start_demo()
+    return {"running": not stop, "changed": changed,
+            "stages": [{"stage": s, "seconds": d, "packet_loss_pct": l, "blackout": b}
+                       for s, d, l, b in DEMO_STAGES]}
+
+
+@app.get("/api/history")
+async def get_history():
+    return await hub.history()
 
 
 app.mount("/", StaticFiles(directory=ROOT / "dashboard", html=True), name="dashboard")

@@ -26,6 +26,48 @@ Everything degrades gracefully:
 | `TIGER_DB_URL` | Telemetry stays in memory only. |
 | mBot2 | UDP packets go nowhere. The dashboard still shows the estimated physical twin. |
 
+## Hub: demo, history, tests
+
+**Startup check.** The hub prints one line per service, for example `[hub] Gemini on (gemini-3.5-flash-lite), ElevenLabs on, Tiger connecting`, then `[tiger] connected`. Run it with `PYTHONUNBUFFERED=1` if you redirect the output to a file. `GET /api/state` also carries `gemini_live` (a real Gemini answer has arrived) and `tiger` (`off`, `connecting`, `connected` or `unreachable`).
+
+* Gemini: `GEMINI_MODEL` picks the model (default `gemini-3.5-flash-lite`). If a model has been retired the hub moves on to the next one in `GEMINI_MODELS` by itself.
+* Tiger: the hub connects in the background and retries every 15 s, queueing rows meanwhile. Tiger listens on a high port (not 5432), which university and venue Wi-Fi often blocks. If it says `unreachable`, switch to the phone hotspot.
+
+**Judge demo.** One trigger runs the whole resilience story and then hands control back:
+
+| Stage (`demo_stage`) | Seconds | Loss | Blackout | Voice callout |
+| --- | --- | --- | --- | --- |
+| `synced` | 20 | 0% | off | |
+| `loss` | 15 | 60% | off | "Packet loss detected. Robots running on shared rules." |
+| `blackout` | 10 | 60% | on | "Blackout. Autonomy engaged." |
+| `resync` | 8 | 0% | off | "Swarm resynchronized." |
+
+Start it by sending `{"demo": true}` over `/ws`, or:
+
+```bash
+curl -X POST localhost:8000/api/demo
+```
+
+Cancel with `{"demo": false}` or `curl -X POST "localhost:8000/api/demo?stop=true"`. Cancelling, or the demo finishing, always leaves the swarm at 0% loss with blackout off. The WebSocket state carries `demo_stage` (`null` when no demo is running). `DEMO_TIME_SCALE=0.25` runs it four times faster for rehearsal.
+
+**History.** `GET /api/history` returns 10-second buckets for charts:
+
+```json
+{"source": "tiger", "bucket_s": 10, "rows": [{"t": "16:05:10", "delivery_pct": 40, "phase_drift": 1.2, "packets": 20}]}
+```
+
+`source` is `tiger` (last 15 minutes from the `swarm_telemetry` table) or `memory` (last 60 seconds, `packets` is `null`) when Tiger is off. The SQL, plus packets per rule and blackout seconds, is in `hub/tiger_queries.sql`:
+
+```bash
+psql "$TIGER_DB_URL" -f hub/tiger_queries.sql
+```
+
+**Tests.** They run offline (no keys, no database, no sound) in about a second:
+
+```bash
+cd hub && .venv/bin/python -m pytest -q
+```
+
 ## Network setup (on the day)
 
 1. Turn on a phone hotspot and force it to 2.4 GHz (iPhone: enable "Maximise Compatibility").
@@ -37,17 +79,15 @@ Everything degrades gracefully:
 
 ## Ultraleap
 
-The Python bindings aren't on PyPI. Install the Ultraleap Gemini tracking software, then:
+The Python bindings aren't on PyPI. Install the Ultraleap Hand Tracking software, plug in the sensor, then:
 
 ```bash
-git clone https://github.com/ultraleap/leapc-python-bindings
-cd leapc-python-bindings
-pip install -r requirements.txt
-python -m build leapc-cffi && pip install leapc-cffi/dist/leapc_cffi-*.tar.gz
-pip install -e leapc-python-api
+hub/build_leap.sh
 ```
 
-Controls: palm height sets BPM (80 to 150). Fist = `pulse`, open palm = `orbit`, pinch = `figure8`. On the dashboard, keys `1` `2` `3` override the rule and `0` hands control back to the gesture.
+The script clones `ultraleap/leapc-python-bindings`, builds it into `hub/.venv` and checks `import leap`. The upstream repo expects LeapC 5; current Ultraleap software ships LeapC 6, so the script patches the library name first (without that the build stops with "No libLeapC.5.dylib found"). The hub prints `[leap] using Ultraleap` when it has the real sensor and `hand_source` is `"leap"` in the state.
+
+Controls: palm height sets BPM (80 to 150) over 150 to 500 mm above the sensor; set `PALM_MIN_MM` / `PALM_MAX_MM` in `.env` if the desk setup changes. Fist = `pulse`, open palm = `orbit`, pinch = `figure8`; hold a gesture for a quarter of a second for it to register. On the dashboard, keys `1` `2` `3` override the rule and `0` hands control back to the gesture.
 
 ## Team
 
