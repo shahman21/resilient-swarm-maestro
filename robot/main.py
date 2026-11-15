@@ -64,6 +64,24 @@ def now_ms():
     return time.ticks_ms()
 
 
+def read_ip():
+    """Current IP, or "0.0.0.0" if the hotspot hasn't assigned one yet."""
+    try:
+        import network
+        ip = network.WLAN(network.STA_IF).ifconfig()[0]
+        if ip and ip != "0.0.0.0":
+            return ip
+    except Exception:
+        pass
+    try:
+        ip = cyberpi.wifi.get_ip()
+        if ip and ip != "0.0.0.0":
+            return str(ip)
+    except Exception:
+        pass
+    return "0.0.0.0"
+
+
 def since(t):
     return time.ticks_diff(time.ticks_ms(), t)
 
@@ -195,12 +213,12 @@ def connect_wifi():
         ok = cyberpi.wifi.is_connect()
     except Exception:
         pass
-    ip = ""
-    try:
-        import network
-        ip = network.WLAN(network.STA_IF).ifconfig()[0]
-    except Exception:
-        pass
+    ip = "0.0.0.0"
+    for _ in range(20):          # wait up to 10 s for the hotspot to hand out an IP
+        ip = read_ip()
+        if ip != "0.0.0.0":
+            break
+        time.sleep(0.5)
     MY_IP = ip
     show(["Swarm Maestro", "Wi-Fi " + ("OK" if ok else "FAILED"), ip])
     time.sleep(3)           # leave the IP readable before the status screen takes over
@@ -303,6 +321,7 @@ def on_beat(st):
 
 
 def main():
+    global MY_IP
     connect_wifi()
     sock = open_socket()
     st = State()
@@ -310,6 +329,7 @@ def main():
     last_status = now_ms()
     last_screen = now_ms()
     current_drive = (0, 0)
+    last_ip = now_ms()
     stop()
 
     while True:
@@ -383,13 +403,18 @@ def main():
             except OSError:
                 pass
 
+        # keep trying until the hotspot has given us a real IP
+        if MY_IP in ("", "0.0.0.0") and since(last_ip) >= 1000:
+            last_ip = now_ms()
+            MY_IP = read_ip()
+
         if since(last_screen) >= 1000:
             last_screen = now_ms()
             show([("SYNC " if st.mode == "synced" else "AUTO ") + st.rule,
-                  "bpm %d step %d" % (st.bpm, st.step),
-                  "missed %d loss %d%%" % (st.missed, st.loss_pct),
                   MY_IP or "no IP",
-                  "loud %d light %d/%d" % (st.last_loud, st.last_light, st.room_light)])
+                  "bpm%d s%d" % (st.bpm, st.step),
+                  "miss%d loss%d" % (st.missed, st.loss_pct),
+                  "L%d B%d/%d" % (st.last_loud, st.last_light, st.room_light)])
 
         time.sleep(0.005)
 
