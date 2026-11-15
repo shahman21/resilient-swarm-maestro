@@ -697,7 +697,7 @@ function frame(now) {
   // extra swarm: cheap glowing dots, positions straight from the shared rule
   if (swarmTotal > N) {
     const dotR = (swarmTotal > 200 ? 2.2 : swarmTotal > 50 ? 3 : 4.5) * d * (1 + 0.5 * Math.exp(-5 * fBeat));
-    ctx.fillStyle = swarmColour; ctx.shadowColor = swarmColour; ctx.shadowBlur = 8 * d;
+    ctx.shadowBlur = 8 * d;   // dots share the named siblings' palette
     ctx.globalAlpha = 0.85;
     const named = new Set([1, 2, 3, 4].map(i => Math.round(i * swarmTotal / N)));
     for (let i = 1; i < swarmTotal; i++) {
@@ -705,6 +705,7 @@ function frame(now) {
       const q = choreo(S.rule, t, i, swarmTotal);
       const depth = 0.86 + 0.28 * ((i * 0.618034) % 1);   // fixed per robot, gives the cloud some depth
       const sp = toScreen({ x: q.x * depth, y: q.y * depth });
+      ctx.fillStyle = ctx.shadowColor = siblingColors[i % siblingColors.length];
       ctx.beginPath(); ctx.arc(sp.sx, sp.sy, dotR, 0, 7); ctx.fill();
     }
     ctx.globalAlpha = 1; ctx.shadowBlur = 0;
