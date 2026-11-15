@@ -1,0 +1,1136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm Maestro</title>
+<!-- Owner: Marz. Single-file digital twin + judge controls. -->
+<script src="./vendor/tailwind.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap">
+<style>
+  :root { --bg:#0b0d12; --panel:#141821; --line:#252b38; --text:#e6e9ef; --muted:#8a93a6;
+          --cyan:#00c8ff; --blue:#2850ff; --magenta:#dc00dc; --amber:#ff7800; --red:#ff3b3b; --green:#2ecc71; }
+  html,body { background:var(--bg); color:var(--text); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; }
+  .lbl { color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+  .rule-btn[data-active="true"], .size-btn[data-active="true"] { background:#e6e9ef; color:#0b0d12; }
+  #demoStage { font-size:clamp(1.4rem, 3vw, 2.5rem); font-weight:750; color:var(--cyan); }
+  #demoStage[data-fault="true"] { color:var(--amber); }
+  header h1 { font-size:clamp(1.5rem, 3vw, 2.5rem); }
+  header button, #connBadge, #modeBadge { font-size:1rem; }
+  .lbl { font-size:.82rem; }
+  input[type=range] { accent-color: var(--red); }
+  kbd { background:#252b38; border-radius:4px; padding:0 5px; font-size:11px; }
+
+.lattice-stage { position: relative; }
+.lattice-stage.globe-view {
+  border-radius: .85rem;
+  overflow: hidden;
+  background: radial-gradient(ellipse at center, #123448 0%, #091923 54%, #050910 82%);
+}
+.globe-view #arena {
+  opacity: 0;
+  height: clamp(320px, 74vh, 1000px);
+  max-height: none;
+  cursor: grab;
+  touch-action: none;
+}
+.globe-view #arena:active { cursor: grabbing; }
+@media (min-width: 1024px) {
+  main:has(.globe-view) { grid-template-columns: minmax(0, 1fr); }
+  main:has(.globe-view) > aside {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    align-items: start;
+  }
+}
+#arena { display: block; }
+#lattice { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.lattice-dock {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .55rem;
+  padding: .65rem; border-radius: .8rem; border: 1px solid #39445b;
+  background: #1d2b43aa; backdrop-filter: blur(12px); color: #eef5ff; font-size: .84rem;
+}
+.lattice-dock[hidden], #latticePreview[hidden], #latticeGestureStatus:empty { display: none; }
+.lattice-dock button {
+  min-height: 34px; padding: .3rem .55rem; border: 1px solid #596782;
+  border-radius: .5rem; background: #283750b0;
+  transition: background-color .15s, border-color .15s, transform .15s;
+}
+.lattice-dock button:hover { transform: translateY(-2px); border-color: #86eaff; background: #3c516f; }
+.lattice-dock button:focus-visible { outline: 2px solid #86eaff; outline-offset: 2px; }
+.lattice-dock label, #latticeColors { display: flex; align-items: center; gap: .35rem; }
+#latticeDensity { width: 5rem; accent-color: #71dfff; }
+#latticeColors button { min-height: 26px; width: 26px; padding: 0; border-radius: 50%; }
+#latticeColors [aria-pressed="true"] { outline: 2px solid #fff; outline-offset: 2px; }
+#latticeGestureStatus { flex-basis: 100%; color: #c3d7ef; }
+#latticePreview {
+  position: fixed; left: .75rem; bottom: .75rem; z-index: 30; width: min(180px, 46vw);
+  border: 1px solid #6a829c; border-radius: .7rem; overflow: hidden; background: #152236;
+}
+#latticeDrag { padding: .35rem .55rem; cursor: grab; touch-action: none; user-select: none; }
+#latticeVideo { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; transform: scaleX(-1); }
+
+:root {
+  --bg:#080707; --panel:#151211; --line:#302523; --text:#fff8f3;
+  --muted:#bfb0a9; --cyan:#52f3de; --amber:#ffc078; --red:#ff7770; --green:#52f3de;
+  font-family:"DM Sans", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+}
+body {
+  background:radial-gradient(ellipse at 18% -20%, #311713, transparent 53%), var(--bg);
+  font-weight:400;
+}
+.player-header { padding: .6rem .25rem 1rem; }
+.player-brand { display:flex; align-items:center; gap:.9rem; }
+.player-brand h1 { font-size:clamp(1.45rem, 2.4vw, 2.2rem); font-weight:400; line-height:1.08; letter-spacing:-.055em; }
+.player-brand p { margin-top:.4rem; font-weight:300; }
+.record-icon {
+  width:52px; aspect-ratio:1; flex:none; border-radius:50%;
+  background:radial-gradient(circle, #080707 0 8%, #fff8f3 9% 19%, #181515 20% 26%, transparent 27%),
+    repeating-radial-gradient(circle, #383232 0 1px, #171515 1.5px 3.5px);
+  border:1px solid #554039;
+}
+.player-status :is(#connBadge,#modeBadge,#runDemoBtn) {
+  border-radius:999px; padding:.45rem .8rem; font-size:.78rem;
+}
+#runDemoBtn { background:var(--cyan); color:#081b18; }
+.player-layout { display:grid; grid-template-columns:minmax(0,1fr); gap:1rem; align-items:start; }
+@media (min-width:1024px) {
+  .player-layout > .player-sidebar {
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+    align-items:start;
+  }
+}
+.panel { border-radius:1.65rem; padding:1.1rem; }
+.player-stage {
+  gap:.65rem;
+  background:radial-gradient(ellipse at 34% 36%, #20182e, #17131e 44%, #110f14 82%);
+}
+.player-stage > :first-child { gap:.8rem; }
+.lbl { color:var(--muted); font-size:.82rem; font-weight:500; letter-spacing:0; text-transform:none; }
+.player-stage > :first-child .lbl { color:var(--text); font-size:1.05rem; }
+.player-stage .lattice-stage {
+  min-width:0;
+  background:radial-gradient(circle, #431d1c22 0 40%, transparent 69%);
+}
+.player-stage .lattice-stage:not(.globe-view) #arena { max-height:128vh; }
+.player-stage .lattice-stage.globe-view {
+  background:radial-gradient(ellipse at center, #422522, #211715 56%, #110d0e 82%);
+}
+.player-transport {
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+  gap:.8rem 1.3rem; padding:.85rem 1rem; background:#080707; border-radius:1.25rem;
+  border-top:2px solid #98766b88;
+}
+.player-track { flex:1 1 12rem; min-width:0; }
+.player-track #music { color:var(--cyan); font-size:1.05rem; overflow-wrap:anywhere; }
+.player-audio { display:flex; flex-wrap:wrap; align-items:center; gap:.65rem; }
+.player-audio #audioBtn { border-radius:999px; padding:.6rem .9rem; background:#fff8f3; color:#100b09; }
+.player-audio label { font-size:.84rem; color:var(--muted); }
+#timbreSelect { border-radius:.8rem; background:#241a18; color:var(--text); }
+.player-sidebar { gap:.8rem; }
+.player-sidebar .panel { background:linear-gradient(145deg, #211715, #121010 72%); }
+.player-sidebar .player-meter {
+  background:radial-gradient(ellipse at 50% 120%, #12423b 0%, #14221e 42%, #141110 74%);
+}
+#bpm, #lossVal { color:var(--cyan); }
+#rule, #seqstep { color:var(--text); }
+#bpm, #rule { font-weight:500; }
+#loss, #latticeDensity { accent-color:var(--cyan); }
+.rule-btn { border-color:#55423c; border-radius:.8rem; }
+.rule-btn[data-active="true"] { background:var(--cyan); color:#071a17; border-color:var(--cyan); }
+#blackoutBtn { border-radius:999px; border-width:1px; background:#341f17; }
+kbd { background:#2d2422; }
+.lattice-dock { border-color:#533c34; color:var(--text); background:#231715cb; border-radius:1.1rem; }
+.lattice-dock button { border-color:#60463d; border-radius:999px; background:#34231f; }
+.lattice-dock button:hover { border-color:var(--cyan); background:#23413a; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
+@media (max-width:520px) {
+  .panel { padding:.75rem; border-radius:1.25rem; }
+  .record-icon { width:40px; }
+  .player-transport { padding:.75rem; }
+}
+</style>
+</head>
+<body class="min-h-screen">
+<div class="max-w-[1400px] mx-auto p-4 flex flex-col gap-4">
+
+  <header class="player-header flex flex-wrap items-center justify-between gap-3">
+    <div class="player-brand">
+      <span class="record-icon" aria-hidden="true"></span>
+      <div>
+      <h1 class="text-xl font-semibold tracking-tight">Resilient Swarm Maestro</h1>
+      <p class="text-sm" style="color:var(--muted)">1 physical mBot2 + 4 virtual siblings, one ~95-byte rule packet per beat</p>
+      </div>
+    </div>
+    <div class="player-status flex flex-wrap items-center gap-2 text-sm">
+      <span id="connBadge" class="px-2 py-1 rounded-md bg-gray-700">connecting…</span>
+      <span id="modeBadge" class="px-2 py-1 rounded-md bg-gray-700">—</span>
+      <button id="runDemoBtn" type="button"
+              class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200 disabled:opacity-50"
+              disabled>Run Demo</button>
+    </div>
+  </header>
+  <p id="demoStage" role="status" hidden></p>
+
+  <section id="usbSyncBar" hidden style="padding:14px 18px;border:1px solid #52f3de66;border-radius:18px;background:#10251fee;display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center">
+    <strong>USB SYNC · <span id="usbAction">STOP</span></strong>
+    <span>Palm tilt: <b id="usbRoll">—</b></span>
+    <span id="usbHand">Waiting for tracker</span>
+    <span id="usbFocus" style="color:#b8e5d5">Click mBlock to control the real robot</span>
+    <small style="flex-basis:100%;color:#cbbda8">Estimated pose from commands sent to Windows · not measured robot location. Keep this page beside mBlock, and click mBlock last.</small>
+  </section>
+  <main class="player-layout">
+    <!-- Arena -->
+    <section class="panel player-stage p-3 flex flex-col gap-2">
+      <div class="flex justify-between items-center">
+        <span class="lbl">Swarm arena</span>
+        <span class="text-xs" style="color:var(--muted)">USB commands → estimated top view; virtual siblings follow</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 text-sm">
+        <span class="lbl">Swarm size</span>
+        <button class="size-btn px-2.5 py-1 rounded-md border border-gray-600" data-size="5">5</button>
+        <button class="size-btn px-2.5 py-1 rounded-md border border-gray-600" data-size="21">21</button>
+        <button class="size-btn px-2.5 py-1 rounded-md border border-gray-600" data-size="101">101</button>
+        <button class="size-btn px-2.5 py-1 rounded-md border border-gray-600" data-size="501">501</button>
+        <span id="sizeNote" class="text-xs" style="color:var(--muted)">same packet, every robot works out its own position</span>
+      </div>
+      <div class="lattice-stage">
+        <canvas id="arena" class="w-full aspect-square max-h-[78vh] mx-auto"></canvas>
+        <canvas id="lattice" aria-hidden="true"></canvas>
+      </div>
+      <div class="player-transport">
+        <div class="player-track">
+          <div class="lbl">Music</div>
+          <div id="music">—</div>
+        </div>
+        <div class="player-audio">
+      <button id="audioBtn" class="px-3 py-1.5 rounded-md font-semibold bg-white text-black hover:bg-gray-200">▶ Start Audio</button>
+      <label class="flex items-center gap-2" for="timbreSelect">
+        Timbre
+        <select id="timbreSelect" class="rounded-md bg-gray-800 px-3 py-1.5 text-white">
+          <option value="cosmic">Cosmic Echo</option>
+          <option value="bright">Bright Synth</option>
+          <option value="soft">Soft Flute</option>
+          <option value="retro">Retro Arcade</option>
+        </select>
+      </label>
+        </div>
+      </div>
+      <div id="latticeControls" class="lattice-dock" hidden>
+        <button id="latticeFocus" type="button" aria-pressed="false">Globe View</button>
+        <button id="latticeMorph" type="button">Morph · Crystal Sphere</button>
+        <button id="latticeFreeze" type="button" aria-pressed="false">Freeze Visuals</button>
+        <button id="latticeReset" type="button">Reset View</button>
+        <label>Density <input id="latticeDensity" type="range" min="18" max="100" value="78"></label>
+        <div id="latticeColors" role="group" aria-label="Robot colors"></div>
+        <button id="latticeGestures" type="button" aria-pressed="false">Enable Gestures</button>
+        <span id="latticeGestureStatus" role="status"></span>
+        <div id="latticePreview" hidden>
+          <div id="latticeDrag">Gesture camera</div>
+          <video id="latticeVideo" muted playsinline aria-label="Gesture camera preview"></video>
+        </div>
+      </div>
+      <div id="commentary" class="text-center text-sm italic min-h-[1.5em]" style="color:var(--muted)"></div>
+    </section>
+
+    <!-- Controls -->
+    <aside class="player-sidebar flex flex-col gap-4">
+      <div class="panel player-meter p-4 grid grid-cols-3 gap-3 text-center">
+        <div><div class="lbl">BPM</div><div id="bpm" class="text-3xl font-semibold tabular-nums">—</div></div>
+        <div><div class="lbl">Rule</div><div id="rule" class="text-xl font-semibold mt-1">—</div></div>
+        <div><div class="lbl">Seq / step</div><div id="seqstep" class="text-lg font-mono mt-1">—</div></div>
+        <div class="col-span-3 flex items-center gap-3 text-left">
+          <canvas id="orb" class="w-28 h-36 shrink-0"></canvas>
+          <div class="flex flex-col gap-1 text-sm">
+            <div class="lbl">Ultraleap hand</div>
+            <div>height → BPM: <span id="handY" class="font-mono">—</span></div>
+            <div>spread: <span id="handSpread" class="font-mono">—</span></div>
+            <div id="handSrc" class="text-xs" style="color:var(--muted)">—</div>
+            <div class="lbl mt-2">Phrase notes</div>
+            <div id="notes" class="font-mono text-sm">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel p-4 flex flex-col gap-4">
+        <div class="lbl">Judge controls</div>
+        <div>
+          <div class="flex justify-between text-sm mb-1"><span>Packet loss</span><span id="lossVal" class="font-mono">0%</span></div>
+          <input id="loss" type="range" min="0" max="100" step="5" value="0" class="w-full">
+        </div>
+        <button id="blackoutBtn" class="w-full py-3 rounded-lg font-semibold border-2 transition"
+                style="border-color:var(--amber);color:var(--amber)">⚡ Blackout kill-switch</button>
+        <div>
+          <div class="text-sm mb-1">Rule</div>
+          <div class="grid grid-cols-4 gap-2 text-sm">
+            <button class="rule-btn py-1.5 rounded-md border border-gray-600" data-rule="">✋ Hand</button>
+            <button class="rule-btn py-1.5 rounded-md border border-gray-600" data-rule="pulse">pulse</button>
+            <button class="rule-btn py-1.5 rounded-md border border-gray-600" data-rule="orbit">orbit</button>
+            <button class="rule-btn py-1.5 rounded-md border border-gray-600" data-rule="figure8">figure8</button>
+          </div>
+        </div>
+        <p class="text-xs" style="color:var(--muted)">
+          <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> rule · <kbd>0</kbd> hand · <kbd>B</kbd> blackout · <kbd>↑</kbd><kbd>↓</kbd> loss ±10
+        </p>
+      </div>
+
+      <div class="panel p-4 flex flex-col gap-2">
+        <div class="flex justify-between gap-2">
+          <span class="lbl" id="historyTitle">Delivery % / phase drift (60 s)</span>
+          <span id="historySource" class="lbl" hidden>Tiger Data</span>
+        </div>
+        <canvas id="chart" class="w-full h-28"></canvas>
+        <div class="flex gap-4 text-xs" style="color:var(--muted)">
+          <span><span class="inline-block w-3 h-0.5 align-middle" style="background:var(--green)"></span> delivery %</span>
+          <span><span class="inline-block w-3 h-0.5 align-middle" style="background:var(--red)"></span> drift (beats)</span>
+          <span class="ml-auto">missed by robot: <span id="missed" class="font-mono">—</span></span>
+        </div>
+      </div>
+
+      <div class="panel p-4 flex flex-col gap-2 text-sm">
+        <div class="lbl">Bandwidth</div>
+        <div class="flex justify-between"><span>Rule packet</span><span id="bwPacket" class="font-mono">—</span></div>
+        <div class="flex justify-between"><span>Swarm uplink now</span><span id="bwNow" class="font-mono">—</span></div>
+        <div class="flex justify-between"><span>Rule broadcast, <span class="swarmN">5</span> robots</span><span id="bwRule500" class="font-mono">—</span></div>
+        <div class="flex justify-between" style="color:var(--muted)"><span>Streaming x,y at 30 Hz, <span class="swarmN">5</span> robots</span><span id="bwStream500" class="font-mono">—</span></div>
+        <div class="flex justify-between font-semibold"><span>Traffic saved</span><span id="bwSaved" class="font-mono" style="color:var(--green)">—</span></div>
+      </div>
+
+      <div class="panel p-4 text-sm flex flex-col gap-2">
+        <div class="flex justify-between items-center">
+          <span class="lbl">AI conductor · this phrase</span>
+          <span id="aiSource" class="text-xs px-2 py-0.5 rounded-md bg-gray-700">—</span>
+        </div>
+        <div class="flex flex-wrap gap-x-4 gap-y-1">
+          <span>Move: <b id="aiRule">—</b> <span id="aiRuleBy" class="text-xs" style="color:var(--muted)"></span></span>
+          <span>Key: <b id="aiKey">—</b></span>
+        </div>
+        <div>Notes: <span id="aiNotes" class="font-mono">—</span></div>
+        <div id="aiReason" class="italic" style="color:var(--text)">—</div>
+        <div id="aiInputs" class="text-xs" style="color:var(--muted)"></div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script src="./usb-sync.js"></script>
+<script>
+// ===========================================================================
+// Shared choreography (keep identical in spirit to robot/main.py, CLAUDE.md §6)
+// t = continuous beat time (step + fraction), i = robot index, n = robot count
+// returns {x, y} in arena units, centre (0,0), radius 1
+// ===========================================================================
+const N = 5;                 // index 0 = physical mBot2, 1..4 virtual (the named robots)
+// Scale demo: extra virtual robots run the SAME rule from the SAME packet. Nothing extra is
+// sent per robot; each one only needs its index and the swarm size to work out where to be.
+let swarmTotal = 5;
+const RULE_COLOUR = { pulse:'#00c8ff', orbit:'#2850ff', figure8:'#dc00dc' };
+const CYAN = '#00DCFF', AMBER = '#FF8C00';   // physical mBot2 LED colours (robot/main.py)
+
+function choreo(rule, t, i, n = N) {
+  const base = 2 * Math.PI * i / n;
+  if (rule === 'pulse') {
+    const beat = ((Math.floor(t) % 4) + 4) % 4, f = t - Math.floor(t);
+    const ease = x => x * x * (3 - 2 * x);
+    const env = beat === 0 ? ease(f) : beat === 1 ? 1 : beat === 2 ? 1 - ease(f) : 0;
+    const r = 0.38 + 0.26 * env;
+    return { x: r * Math.cos(base), y: r * Math.sin(base) };
+  }
+  if (rule === 'figure8') {
+    const p = 2 * Math.PI * t / 4 + base;   // one figure-8 lap per 4 beats
+    return { x: 0.72 * Math.sin(p), y: 0.42 * Math.sin(2 * p) };
+  }
+  // orbit: clockwise, one lap every 16 beats, equal spacing 2π/n
+  const a = base - 2 * Math.PI * t / 16;
+  return { x: 0.62 * Math.cos(a), y: 0.62 * Math.sin(a) };
+}
+
+// ===========================================================================
+// Offline hub: a JS copy of hub/server.py so the UI works without the hub
+// ===========================================================================
+class LocalHub {
+  constructor() {
+    Object.assign(this, { seq:0, step:0, bpm:120, rule:'orbit', notes:[60,64,67,72], phrase:0, packet_loss_pct:0, blackout:false,
+      override_rule:null, delivered:[], beatDelivered:false, ld:null, hist:[], sends:[], t0:performance.now() });
+    this.beatStart = performance.now(); this.nextBeat = this.beatStart; this.nextHb = 0; this.lastHist = 0;
+  }
+  apply(c) {
+    if ('packet_loss_pct' in c) this.packet_loss_pct = Math.max(0, Math.min(100, +c.packet_loss_pct));
+    if ('blackout' in c) this.blackout = !!c.blackout;
+    if ('override_rule' in c) this.override_rule = ['pulse','orbit','figure8'].includes(c.override_rule) ? c.override_rule : null;
+  }
+  send(now) {
+    this.sends.push(now);
+    if (this.blackout || Math.random() * 100 < this.packet_loss_pct) return;
+    if (!this.ld || this.ld.seq !== this.seq) this.ld = { seq:this.seq, step:this.step, bpm:this.bpm, rule:this.rule, t:now };
+    this.lastLink = now;
+    this.beatDelivered = true;
+  }
+  tick(now) {
+    const handY = 0.5 + 0.4 * Math.sin((now - this.t0) / 1000 * 2 * Math.PI / 40);
+    if (now >= this.nextBeat) {
+      if (this.seq) { this.delivered.push(this.beatDelivered); if (this.delivered.length > 20) this.delivered.shift(); }
+      this.seq++; this.step++; this.beatDelivered = false;
+      this.bpm = Math.round(80 + handY * 70);
+      if (this.step % 8 === 0) {   // phrase boundary, like the hub's Gemini refresh
+        const prog = { pulse:[57,53,60,55], orbit:[60,57,53,55], figure8:[62,55,64,57] }[this.rule];
+        const root = prog[this.phrase++ % 4], minor = this.rule !== 'orbit' ? 3 : 4;
+        this.notes = [root, root + minor, root + 7, root + 12];
+      }
+      this.rule = this.override_rule || this.rule;
+      this.beatStart = now; this.send(now);
+      this.nextBeat = Math.max(this.nextBeat + 60000 / this.bpm, now + 1);
+      this.nextHb = now + 150;
+    } else if (now >= this.nextHb) { this.send(now); this.nextHb = now + 150; }
+    this.sends = this.sends.filter(t => now - t < 1000);
+    const deliv = this.delivered.length ? Math.round(100 * this.delivered.filter(Boolean).length / this.delivered.length) : 100;
+    const truePhase = this.step + (now - this.beatStart) * this.bpm / 60000;
+    const drift = this.ld ? Math.abs(truePhase - (this.ld.step + (now - this.ld.t) * this.ld.bpm / 60000)) : 0;
+    if (now - this.lastHist >= 1000) {
+      this.lastHist = now;
+      this.hist.push({ t: new Date().toTimeString().slice(0, 8), delivery_pct: deliv, phase_drift: +drift.toFixed(2) });
+      if (this.hist.length > 60) this.hist.shift();
+    }
+    const pkt = JSON.stringify({ seq:this.seq, step:this.step, bpm:this.bpm, rule:this.rule, notes:this.notes, loss_pct:this.packet_loss_pct, blackout:this.blackout });
+    const m = { pulse:['A','minor',['Am','F','C','G']], orbit:['C','major',['C','Am','F','G']], figure8:['D','dorian',['Dm','G','Em','A']] }[this.rule];
+    return {
+      seq:this.seq, step:this.step, bpm:this.bpm, rule:this.rule, notes:this.notes, loss_pct:this.packet_loss_pct,
+      packet_loss_pct:this.packet_loss_pct, blackout:this.blackout, packet_bytes:pkt.length, hand_detected:true,
+      hand_y:+handY.toFixed(3), hand_spread:+(0.5 + 0.5 * Math.sin((now - this.t0) / 1000 * 2 * Math.PI / 13)).toFixed(3),
+      ai_commentary:`Offline sim: swarm ${this.rule} in ${m[0]} ${m[1]} at ${this.bpm} BPM`,
+      telemetry_history:this.hist,
+      last_delivered: this.ld && { ...this.ld, age_ms: Math.round(now - this.ld.t), link_age_ms: Math.round(now - this.lastLink) },
+      robot:null, music:{ key:m[0], scale:m[1], chords:m[2] }, hand_source:'mock',
+      override_rule:this.override_rule, sends_per_sec:this.sends.length,
+      beat_phase: Math.min(1, (now - this.beatStart) * this.bpm / 60000),
+    };
+  }
+}
+
+// ===========================================================================
+// Connection
+// ===========================================================================
+let S = null, recvAt = 0, ws = null, live = false, localHub = null, localTimer = null;
+const WS_URL = (location.protocol.startsWith('http') ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws` : 'ws://localhost:8000/ws');
+
+function connect() {
+  try { ws = new WebSocket(WS_URL); } catch { return goOffline(); }
+  ws.onopen = () => { live = true; stopOffline(); badge(); };
+  ws.onmessage = e => { try { onState(JSON.parse(e.data)); } catch {} };
+  ws.onclose = () => { if (live) live = false; goOffline(); setTimeout(connect, 2000); };
+  ws.onerror = () => ws.close();
+}
+function goOffline() {
+  if (!localHub) localHub = new LocalHub();
+  if (S && !live) { localHub.apply({ packet_loss_pct:S.packet_loss_pct, blackout:S.blackout, override_rule:S.override_rule }); }
+  if (!localTimer) localTimer = setInterval(() => onState(localHub.tick(performance.now())), 50);
+  badge();
+}
+function stopOffline() { clearInterval(localTimer); localTimer = null; }
+function sendControl(c) {
+  if (live && ws && ws.readyState === 1) ws.send(JSON.stringify(c));
+  else if (localHub) localHub.apply(c);
+}
+function badge() {
+  if (SYNC_MODE) { usbBadge(); return; }
+  renderDemo(live ? S?.demo_stage : null);
+  if (live) refreshHistory();
+  else history = null;
+  const b = document.getElementById('connBadge');
+  b.textContent = live ? '● hub live' : '○ offline sim';
+  b.style.background = live ? '#14532d' : '#3f3f46';
+}
+
+// ===========================================================================
+// State tracking -> continuous beat clocks
+// ===========================================================================
+const clk = { trueStep:-1, trueT0:0, robStep:-1, robT0:0 };
+function beatMs(bpm) { return 60000 / Math.max(30, bpm || 120); }
+
+const deliveredSeen = new Set();   // seqs the robot is known to have received
+let lastDropAt = -1e9;
+function onState(s) {
+  if (SYNC_MODE) {
+    const u = USB.data;
+    s = {...s, hand_detected: Boolean(usbFresh() && u?.grab != null),
+      hand_y: u?.height != null ? Math.max(0, Math.min(1, (u.height - 100) / 400)) : 0.5,
+      hand_spread: u?.grab != null ? 1 - u.grab : 0,
+      hand_source: 'Leap USB', ai_commentary: 'Command-synchronised motion · estimated position, no robot telemetry'};
+  }
+  const now = performance.now();
+  if (s.last_delivered) deliveredSeen.add(s.last_delivered.seq);
+  if (s.step !== clk.trueStep) {
+    const prevSeq = S && S.seq;
+    if (prevSeq && !deliveredSeen.has(prevSeq)) lastDropAt = now;
+    if (deliveredSeen.size > 64) deliveredSeen.delete(deliveredSeen.values().next().value);
+    clk.trueStep = s.step;
+    clk.trueT0 = now - (s.beat_phase || 0) * beatMs(s.bpm);
+    rings.push({ t0: now, dur: beatMs(s.bpm) * 1.6, colour: physLed, strong: s.step % 4 === 0 });
+    onSwarmBeat(s);
+    // previous beat never reached the robot (all its sends dropped) -> radar blip
+    if (lastDropAt === now && !s.blackout) sfxRadar();
+  }
+  if (S && s.blackout && !S.blackout) sfxStatic();
+  if (s.robot && s.robot.step !== clk.robStep) { clk.robStep = s.robot.step; clk.robT0 = now - (s.robot.age_ms || 0); }
+  S = s; recvAt = now;
+  renderPanel(s);
+}
+
+function trueT(now) {
+  return S.step + Math.min(1, (now - clk.trueT0) / beatMs(S.bpm));
+}
+// Where the physical robot is: real status if it's talking to us, otherwise the same
+// dead reckoning the robot does (last packet it got + its own clock).
+function physical(now) {
+  if (SYNC_MODE) return {t: trueT(now), rule: S.rule, mode: 'synced', real: false};
+  const robotFresh = S.robot && (S.robot.age_ms + (now - recvAt)) < 1500;
+  const ld = S.last_delivered;
+  const rule = (ld && ld.rule) || S.rule;
+  if (robotFresh) {
+    const bpm = (ld && ld.bpm) || S.bpm;
+    return { t: S.robot.step + Math.min(1, (now - clk.robT0) / beatMs(bpm)), rule, mode: S.robot.mode, real: true };
+  }
+  if (!ld) return { t: trueT(now), rule, mode: 'auto', real: false };
+  const age = ld.age_ms + (now - recvAt);
+  // Same as the robot's 600 ms watchdog: any packet that got through counts, including
+  // the 150 ms repeats. Without this, beats longer than 600 ms (under 100 BPM) look like loss.
+  const linkAge = (ld.link_age_ms ?? ld.age_ms) + (now - recvAt);
+  return { t: ld.step + age / beatMs(ld.bpm), rule, mode: (S.blackout || linkAge > 600) ? 'auto' : 'synced', real: false };
+}
+
+// ===========================================================================
+// Arena rendering
+// ===========================================================================
+const cv = document.getElementById('arena'), ctx = cv.getContext('2d');
+const disp = Array.from({ length: N }, () => ({ x: 0, y: 0, h: 0 }));
+const ghostDisp = { x: 0, y: 0 };
+const trails = Array.from({ length: N }, () => []);
+let lastFrame = performance.now(), lastPhysStep = null;
+let physLed = CYAN, lastLedState = 'synced';
+const rings = [];        // beat rings spawned on every step tick
+
+function fit() {
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = r.width * d; cv.height = r.height * d;
+}
+addEventListener('resize', fit);
+
+function drawSnakeHead(p, color, size, label, flash) {
+  ctx.save();
+  ctx.translate(p.sx, p.sy);
+  ctx.rotate(p.h);
+  const skin = ctx.createRadialGradient(size * 0.28, -size * 0.37, 0, 0, 0, size * 1.2);
+  skin.addColorStop(0, '#efffff');
+  skin.addColorStop(0.37, color);
+  skin.addColorStop(1, '#112043');
+  ctx.fillStyle = skin;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = size * (0.55 + flash);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, size * 1.13, size * 0.91, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  for (const side of [-1, 1]) {
+    const y = side * size * 0.44;
+    ctx.fillStyle = '#f6fbff';
+    ctx.beginPath();
+    ctx.arc(size * 0.48, y, size * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#080d1c';
+    ctx.beginPath();
+    ctx.arc(size * 0.60, y, size * 0.20, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  drawArenaLabel(label, p.sx, p.sy + size * 1.6);
+}
+
+const siblingColors = ['#ff6dcc', '#63f5a9', '#b083ff', '#ffca64'];
+
+function drawArenaLabel(label, x, y) {
+  ctx.save();
+  ctx.font = `500 ${12 * devicePixelRatio}px "DM Sans", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 3 * devicePixelRatio;
+  ctx.strokeStyle = '#090e1e';
+  ctx.strokeText(label, x, y);
+  ctx.fillStyle = '#e9f3ff';
+  ctx.fillText(label, x, y);
+  ctx.restore();
+}
+
+function drawSiblingDot(position, index, scale, flash) {
+  const { sx, sy } = position;
+  const radius = (13 + 4 * flash) * scale;
+  const color = siblingColors[index - 1];
+  const haloRadius = radius * (2.1 + flash * 0.6);
+  const halo = ctx.createRadialGradient(sx, sy, radius * 0.35, sx, sy, haloRadius);
+  halo.addColorStop(0, color + 'b0');
+  halo.addColorStop(1, color + '00');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(sx, sy, haloRadius, 0, Math.PI * 2);
+  ctx.fill();
+  const body = ctx.createRadialGradient(sx - radius * 0.29, sy - radius * 0.3, 0, sx, sy, radius);
+  body.addColorStop(0, '#ffffff');
+  body.addColorStop(0.55, color);
+  body.addColorStop(1, color + '88');
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  drawArenaLabel(`Sibling ${index}`, sx, sy + radius + 15 * scale);
+}
+
+function drawScoreBackdrop(cx, cy, radius, activeNote) {
+  const spacing = radius * 0.065;
+  const left = cx - radius * 0.71;
+  const right = cx + radius * 0.71;
+  const bottom = cy + 2 * spacing;
+  const staffSteps = [-2, 0, 1, 2, 3]; // C4 E♭4 F4 G4 A4
+  ctx.save();
+  ctx.strokeStyle = '#a5c8ed29';
+  ctx.fillStyle = '#c1dcf841';
+  ctx.lineWidth = Math.max(1, radius * 0.002);
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const y = bottom - i * spacing;
+    ctx.moveTo(left, y);
+    ctx.lineTo(right, y);
+  }
+  ctx.stroke();
+  staffSteps.forEach((step, index) => {
+    ctx.fillStyle = index === activeNote ? '#52f3debd' : '#c1dcf841';
+    const x = left + (right - left) * (index + 0.65) / staffSteps.length;
+    const y = bottom - step * spacing / 2;
+    ctx.beginPath();
+    ctx.ellipse(x, y, spacing * 0.42, spacing * 0.30, -0.32, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + spacing * 0.37, y);
+    ctx.lineTo(x + spacing * 0.37, y - spacing * 2.7);
+    if (step === -2) {
+      ctx.moveTo(x - spacing * 0.65, y);
+      ctx.lineTo(x + spacing * 0.65, y);
+    }
+    ctx.stroke();
+    if (index === 1) {
+      ctx.font = `${spacing * 1.1}px system-ui`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('♭', x - spacing * 0.78, y);
+    }
+  });
+  ctx.restore();
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!S) return;
+  const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
+  const W = cv.width, H = cv.height, R = Math.min(W, H) * 0.44, cx = W / 2, cy = H / 2, d = devicePixelRatio;
+  const toScreen = q => ({ sx: cx + q.x * R, sy: cy + q.y * R });
+  ctx.clearRect(0, 0, W, H);
+
+  // arena + boundary tape
+  ctx.fillStyle = '#0b0a17ec'; ctx.beginPath(); ctx.arc(cx, cy, R * 1.05, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 10 * d; ctx.stroke();
+  ctx.strokeStyle = '#88524a70'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, R * 1.05, 0, 7); ctx.stroke();
+
+  const t = trueT(now), ph = physical(now);
+  const k = 1 - Math.exp(-dt * 10);   // smoothing so rule switches glide instead of teleport
+
+  // physical LED colour: cyan when synced, amber during packet loss / blackout
+  const driftNow = Math.abs(t - ph.t);
+  const recentDrop = now - lastDropAt < 2 * beatMs(S.bpm);   // mirrors robot's recent_gap
+  const ledState = (ph.mode === 'auto' || driftNow > 0.25 || S.blackout || recentDrop) ? 'lossy' : 'synced';
+  physLed = ledState === 'synced' ? CYAN : AMBER;
+  if (ledState !== lastLedState && ledState === 'synced') sfxChime();
+  lastLedState = ledState;
+
+  // beat flash + concentric beat rings (one per step tick, coloured like the mBot2 LEDs)
+  const fBeat = t - Math.floor(t);
+  const activeNote = motifIndex(clk.trueStep);
+  drawScoreBackdrop(cx, cy, R, activeNote);
+  ctx.fillStyle = physLed + Math.round((1 - fBeat) * 22).toString(16).padStart(2, '0');
+  ctx.beginPath(); ctx.arc(cx, cy, R * 1.05, 0, 7); ctx.fill();
+  for (let j = rings.length - 1; j >= 0; j--) {
+    const rg = rings[j], f = Math.max(0, (now - rg.t0) / rg.dur);
+    if (f >= 1) { rings.splice(j, 1); continue; }
+    const e = 1 - Math.pow(1 - f, 3);
+    ctx.strokeStyle = rg.colour + Math.round((1 - f) * (rg.strong ? 230 : 150)).toString(16).padStart(2, '0');
+    ctx.lineWidth = (rg.strong ? 5 : 3) * d * (1 - f) + d;
+    ctx.beginPath(); ctx.arc(cx, cy, R * (0.08 + 0.97 * e), 0, 7); ctx.stroke();
+  }
+
+  for (let i = 0; i < N; i++) {
+    // the four named robots take evenly spaced slots in whatever size swarm is showing
+    const slot = i === 0 ? 0 : Math.round(i * swarmTotal / N);
+    const target = SYNC_MODE ? usbTarget(slot, swarmTotal) : (i === 0 ? choreo(ph.rule, ph.t, 0, swarmTotal) : choreo(S.rule, t, slot, swarmTotal));
+    const dp = disp[i], nx = dp.x + (target.x - dp.x) * k, ny = dp.y + (target.y - dp.y) * k;
+    if (Math.hypot(nx - dp.x, ny - dp.y) > 1e-4) dp.h = Math.atan2(ny - dp.y, nx - dp.x);
+    dp.x = nx; dp.y = ny;
+    if (SYNC_MODE && USB.data?.pose) dp.h = USB.data.pose.heading;
+    trails[i].push({ x: nx, y: ny }); if (trails[i].length > 40) trails[i].shift();
+  }
+  // ghost = where physical should be
+  const g = SYNC_MODE ? usbTarget(0) : choreo(S.rule, t, 0, swarmTotal);
+  ghostDisp.x += (g.x - ghostDisp.x) * k; ghostDisp.y += (g.y - ghostDisp.y) * k;
+
+  // Space the trail dots by distance so they remain separated at any BPM.
+  trails.forEach((trail, i) => {
+    let distance = 0;
+    const color = i === 0 ? physLed : siblingColors[i - 1];
+    for (let j = trail.length - 2; j >= 0; j--) {
+      const p = toScreen(trail[j]), next = toScreen(trail[j + 1]);
+      distance += Math.hypot(p.sx - next.sx, p.sy - next.sy);
+      if (distance < (i === 0 ? 21 : 17) * d) continue;
+      distance = 0;
+      const age = j / trail.length;
+      ctx.fillStyle = color + Math.round((0.18 + 0.53 * age) * 255).toString(16).padStart(2, '0');
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, (i === 0 ? 4 + age * 3 : 2 + age * 2) * d, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+
+  // target ghost ring: always shown, drift line when the physical robot is off target
+  const pS = { ...toScreen(disp[0]), h: disp[0].h }, gS = { ...toScreen(ghostDisp), h: disp[0].h };
+  const driftPx = Math.hypot(pS.sx - gS.sx, pS.sy - gS.sy);
+  if (driftPx > 6 * d) {
+    ctx.setLineDash([4 * d, 4 * d]); ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 2 * d;
+    ctx.beginPath(); ctx.moveTo(pS.sx, pS.sy); ctx.lineTo(gS.sx, gS.sy); ctx.stroke();
+  }
+  ctx.setLineDash([2 * d, 5 * d]); ctx.lineCap = 'round';
+  ctx.strokeStyle = driftPx > 6 * d ? '#ffffffdd' : '#ffffff66'; ctx.lineWidth = 2.5 * d;
+  ctx.beginPath(); ctx.arc(gS.sx, gS.sy, 30 * d + 4 * d * (1 - fBeat), 0, 7); ctx.stroke();
+  ctx.setLineDash([]); ctx.lineCap = 'butt';
+  if (driftPx > 6 * d) {
+    ctx.fillStyle = '#ffffffaa'; ctx.font = `${11 * d}px ui-sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText('target', gS.sx, gS.sy - 36 * d);
+  }
+
+  // extra swarm: cheap glowing dots, positions straight from the shared rule
+  if (swarmTotal > N) {
+    const dotR = (swarmTotal > 200 ? 2.2 : swarmTotal > 50 ? 3 : 4.5) * d * (1 + 0.5 * Math.exp(-5 * fBeat));
+    ctx.shadowBlur = 8 * d;   // dots share the named siblings' palette
+    ctx.globalAlpha = 0.85;
+    const named = new Set([1, 2, 3, 4].map(i => Math.round(i * swarmTotal / N)));
+    for (let i = 1; i < swarmTotal; i++) {
+      if (named.has(i)) continue;   // drawn as a named sibling below
+      const q = SYNC_MODE ? usbTarget(i, swarmTotal) : choreo(S.rule, t, i, swarmTotal);
+      const depth = 0.86 + 0.28 * ((i * 0.618034) % 1);   // fixed per robot, gives the cloud some depth
+      const sp = toScreen({ x: q.x * depth, y: q.y * depth });
+      ctx.fillStyle = ctx.shadowColor = siblingColors[i % siblingColors.length];
+      ctx.beginPath(); ctx.arc(sp.sx, sp.sy, dotR, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  }
+  const fPh = ph.t - Math.floor(ph.t);
+  const soundingRobot = activeNote === 0 ? pS : toScreen(disp[activeNote]);
+  const notePhase = activeNote === 0 ? fPh : fBeat;
+  const noteRadius = (activeNote === 0 ? 25 : 22) * d;
+  ctx.save();
+  ctx.globalAlpha = (1 - notePhase) ** 1.5;
+  ctx.strokeStyle = activeNote === 0 ? physLed : '#52f3de';
+  ctx.lineWidth = (activeNote === 0 ? 3 : 4) * d;
+  ctx.shadowColor = ctx.strokeStyle;
+  ctx.shadowBlur = 19 * d;
+  ctx.beginPath();
+  ctx.arc(soundingRobot.sx, soundingRobot.sy, noteRadius + 13 * d * notePhase, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  const globeView = window.renderSwarmLattice?.(now, fBeat);
+  if (!globeView) {
+    for (let i = 1; i < N; i++) {
+      drawSiblingDot(toScreen(disp[i]), i, d, i === activeNote ? (1 - fBeat) ** 1.4 : 0);
+    }
+  }
+  drawSnakeHead(pS, physLed, 25 * d, SYNC_MODE ? 'USB mBot2 (estimate)' : (ph.real ? 'mBot2 (physical)' : 'mBot2 (estimated)'),
+    activeNote === 0 ? 1 - fPh : 0);
+
+  // physical robot's own beat -> audible phasing when out of sync
+  const ps = Math.floor(ph.t);
+  if (lastPhysStep !== null && ps !== lastPhysStep) onPhysicalBeat(ps, driftNow);
+  lastPhysStep = ps;
+
+  const mb = document.getElementById('modeBadge');
+  const drift = driftNow;
+  if (SYNC_MODE) {
+    mb.textContent = usbFresh() ? 'USB · ' + USB.data.command.toUpperCase() : 'USB · STOP';
+    mb.style.background = usbFresh() ? '#0e5566' : '#555';
+  }
+  else if (S.blackout) { mb.textContent = 'BLACKOUT · AUTONOMOUS'; mb.style.background = '#7c3a00'; }
+  else if (ph.mode === 'auto') { mb.textContent = 'PACKET LOSS · AUTONOMOUS'; mb.style.background = '#7c3a00'; }
+  else if (drift > 0.25) { mb.textContent = `PACKET LOSS · drift ${drift.toFixed(1)} beats`; mb.style.background = '#7c3a00'; }
+  else { mb.textContent = 'SYNCED'; mb.style.background = '#0e5566'; }
+  drawOrb(now);
+}
+
+// ===========================================================================
+// Hand orb: height = BPM, size + spikes = finger spread, spins with the beat
+// ===========================================================================
+const orbCv = document.getElementById('orb'), oc = orbCv.getContext('2d');
+const orbDisp = { y: 0.5, s: 0.5 };
+function drawOrb(now) {
+  const d = devicePixelRatio || 1, r = orbCv.getBoundingClientRect();
+  if (orbCv.width !== Math.round(r.width * d)) { orbCv.width = r.width * d; orbCv.height = r.height * d; }
+  const W = orbCv.width, H = orbCv.height;
+  oc.clearRect(0, 0, W, H);
+  const has = S.hand_detected;
+  orbDisp.y += ((has ? S.hand_y : 0.5) - orbDisp.y) * 0.15;
+  orbDisp.s += ((has ? (S.hand_spread ?? 0.5) : 0.2) - orbDisp.s) * 0.15;
+  // track
+  const top = H * 0.12, bot = H * 0.88, x = W / 2;
+  oc.strokeStyle = '#252b38'; oc.lineWidth = 2 * d;
+  oc.beginPath(); oc.moveTo(x, top); oc.lineTo(x, bot); oc.stroke();
+  oc.fillStyle = '#8a93a6'; oc.font = `${9 * d}px ui-sans-serif`; oc.textAlign = 'left';
+  oc.fillText('150', 2 * d, top + 3 * d); oc.fillText('80', 2 * d, bot + 3 * d);
+  const y = bot - orbDisp.y * (bot - top);
+  const t = S ? trueT(now) : 0, f = t - Math.floor(t);
+  const rad = (10 + 10 * orbDisp.s) * d * (1 + 0.12 * (1 - f));
+  // shadow on the "floor"
+  oc.fillStyle = '#00000066'; oc.beginPath(); oc.ellipse(x, bot + 6 * d, rad * (1.2 - orbDisp.y * 0.6), rad * 0.25, 0, 0, 7); oc.fill();
+  // spread spikes
+  const spikes = 5, spin = t * Math.PI / 2;
+  oc.strokeStyle = physLed + 'aa'; oc.lineWidth = 2 * d;
+  for (let i = 0; i < spikes; i++) {
+    const a = spin + i * 2 * Math.PI / spikes, len = rad * (1.1 + 0.8 * orbDisp.s);
+    oc.beginPath(); oc.moveTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad * 0.5);
+    oc.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len * 0.5); oc.stroke();
+  }
+  // sphere with highlight
+  const g = oc.createRadialGradient(x - rad * 0.35, y - rad * 0.4, rad * 0.1, x, y, rad);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(0.35, has ? physLed : '#556'); g.addColorStop(1, '#0b0d12');
+  oc.shadowColor = has ? physLed : 'transparent'; oc.shadowBlur = 20 * d * (1 - f * 0.7);
+  oc.fillStyle = g; oc.beginPath(); oc.arc(x, y, rad, 0, 7); oc.fill(); oc.shadowBlur = 0;
+  // latitude lines for a 3D feel
+  oc.strokeStyle = '#ffffff33'; oc.lineWidth = 1 * d;
+  for (let k = -1; k <= 1; k++) {
+    oc.beginPath(); oc.ellipse(x, y + k * rad * 0.45, rad * Math.sqrt(1 - (k * 0.45) ** 2), rad * 0.18, 0, 0, 7); oc.stroke();
+  }
+  oc.beginPath(); oc.ellipse(x, y, rad * Math.abs(Math.cos(spin)), rad, 0, 0, 7); oc.stroke();
+}
+
+// ===========================================================================
+// Side panel
+// ===========================================================================
+const $ = id => document.getElementById(id);
+function fmtBytes(bps) {
+  if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' MB/s';
+  if (bps >= 1e3) return (bps / 1e3).toFixed(1) + ' kB/s';
+  return Math.round(bps) + ' B/s';
+}
+const demoStages = new Map([
+  ['synced', 'STAGE 1/4 · SYNCHRONISED'],
+  ['loss', 'STAGE 2/4 · PACKET LOSS 60%'],
+  ['blackout', 'STAGE 3/4 · BLACKOUT'],
+  ['resync', 'STAGE 4/4 · RESYNCHRONISING']
+]);
+function renderDemo(stage) {
+  const label = demoStages.get(stage);
+  const banner = $('demoStage');
+  const button = $('runDemoBtn');
+  const text = label || '';
+  if (banner.textContent !== text) banner.textContent = text;
+  banner.hidden = !label;
+  banner.dataset.fault = String(stage === 'loss' || stage === 'blackout');
+  button.textContent = label ? 'Cancel Demo' : 'Run Demo';
+  button.disabled = !live;
+}
+
+let history = null;
+let historyRequest = null;
+async function refreshHistory() {
+  if (!live || historyRequest) return;
+  const socket = ws;
+  const request = new AbortController();
+  historyRequest = request;
+  const timeout = setTimeout(() => request.abort(), 5000);
+  try {
+    const response = await fetch('/api/history', { cache: 'no-store', signal: request.signal });
+    if (!response.ok) throw new Error('History unavailable');
+    const data = await response.json();
+    if (!live || ws !== socket) return;
+    const rows = Array.isArray(data.rows) ? data.rows.filter(row =>
+      row && Number.isFinite(row.delivery_pct) && Number.isFinite(row.phase_drift)) : [];
+    history = rows.length >= 2 && Number.isFinite(data.bucket_s) && data.bucket_s > 0
+      ? { ...data, rows }
+      : null;
+  } catch {
+    if (ws === socket) history = null;
+  } finally {
+    clearTimeout(timeout);
+    historyRequest = null;
+  }
+}
+setInterval(refreshHistory, 10000);
+
+function renderPanel(s) {
+  renderDemo(live ? s.demo_stage : null);
+  $('bpm').textContent = s.bpm;
+  $('rule').textContent = s.rule; $('rule').style.color = RULE_COLOUR[s.rule];
+  $('seqstep').textContent = `${s.seq} / ${s.step}`;
+  $('handY').textContent = s.hand_detected ? `${s.hand_y.toFixed(2)} → ${s.bpm}` : '—';
+  $('handSpread').textContent = s.hand_detected && s.hand_spread != null ? s.hand_spread.toFixed(2) : '—';
+  $('handSrc').textContent = s.hand_detected ? `source: ${s.hand_source || 'leap'}` : 'no hand detected';
+  const nn = s.notes || [];
+  $('notes').innerHTML = nn.map((n, i) => `<span style="${i === s.step % nn.length ? 'color:#00DCFF;font-weight:700' : ''}">${noteName(n)}</span>`).join(' ');
+  if (document.activeElement !== $('loss')) $('loss').value = s.packet_loss_pct;
+  $('lossVal').textContent = s.packet_loss_pct + '%';
+  const bb = $('blackoutBtn');
+  bb.style.background = s.blackout ? 'var(--amber)' : 'transparent';
+  bb.style.color = s.blackout ? '#0b0d12' : 'var(--amber)';
+  bb.textContent = s.blackout ? '⚡ BLACKOUT ON (click to restore)' : '⚡ Blackout kill-switch';
+  document.querySelectorAll('.rule-btn').forEach(b => b.dataset.active = String((b.dataset.rule || null) === (s.override_rule || null)));
+  $('commentary').textContent = s.ai_commentary || '';
+  $('missed').textContent = s.robot ? s.robot.missed : '—';
+  const sps = s.sends_per_sec || (s.bpm / 60);
+  $('bwPacket').textContent = `${s.packet_bytes} bytes`;
+  $('bwNow').textContent = fmtBytes(s.packet_bytes * sps);
+  const ruleBps = s.packet_bytes * sps, streamBps = swarmTotal * 30 * 32;   // ~32 B per x,y,heading update
+  $('bwRule500').textContent = fmtBytes(ruleBps);                  // one broadcast reaches everyone
+  $('bwStream500').textContent = fmtBytes(streamBps);
+  $('bwSaved').textContent = ruleBps ? `${Math.round(streamBps / ruleBps).toLocaleString()}× less` : '—';
+  document.querySelectorAll('.swarmN').forEach(e => e.textContent = swarmTotal);
+  renderAi(s);
+  if (s.music) $('music').textContent = `${s.music.key} ${s.music.scale} · ${s.music.chords.join(' – ')}`;
+  $('historyTitle').textContent = history
+    ? `Delivery % / phase drift (${history.bucket_s} s buckets)`
+    : 'Delivery % / phase drift (60 s)';
+  $('historySource').hidden = history?.source !== 'tiger';
+  if (SYNC_MODE) $('historyTitle').textContent = 'Demo rhythm metrics · not robot telemetry';
+  drawChart(history?.rows || s.telemetry_history || [], history ? history.rows.length : 60);
+}
+
+const ch = $('chart'), cc = ch.getContext('2d');
+function drawChart(hist, slots) {
+  const d = devicePixelRatio || 1, r = ch.getBoundingClientRect();
+  const width = Math.round(r.width * d), height = Math.round(r.height * d);
+  if (ch.width !== width || ch.height !== height) { ch.width = width; ch.height = height; }
+  const W = ch.width, H = ch.height;
+  cc.clearRect(0, 0, W, H);
+  cc.strokeStyle = '#252b38'; cc.lineWidth = 1;
+  [0.25, 0.5, 0.75].forEach(f => { cc.beginPath(); cc.moveTo(0, H * f); cc.lineTo(W, H * f); cc.stroke(); });
+  if (hist.length < 2) return;
+  const count = Math.max(hist.length, slots, 2);
+  const x = i => (count - hist.length + i) / (count - 1) * W;
+  const line = (vals, max, colour) => {
+    cc.strokeStyle = colour; cc.lineWidth = 2 * d; cc.beginPath();
+    vals.forEach((v, i) => { const y = H - Math.min(1, v / max) * (H - 4) - 2; i ? cc.lineTo(x(i), y) : cc.moveTo(x(i), y); });
+    cc.stroke();
+  };
+  const deliv = hist.map(h => h.delivery_pct), drift = hist.map(h => h.phase_drift);
+  line(deliv, 100, '#2ecc71');
+  line(drift, Math.max(4, ...drift), '#ff3b3b');
+}
+
+function renderAi(s) {
+  const ai = s.ai;
+  if (!ai) {   // older hub or offline sim: show what we know
+    $('aiSource').textContent = live ? 'hub' : 'offline sim';
+    $('aiReason').textContent = s.ai_commentary || '—';
+    return;
+  }
+  const gem = ai.source === 'gemini';
+  $('aiSource').textContent = gem ? `Gemini · ${ai.model || ''}` : 'fallback table';
+  $('aiSource').style.background = gem ? '#1e3a8a' : '#3f3f46';
+  $('aiRule').textContent = ai.rule || s.rule;
+  $('aiRuleBy').textContent = {
+    ai: '(Gemini is driving)', hand: '(your hand overrides)', judge: '(judge override)', unchanged: '(kept)'
+  }[ai.rule_by] || '';
+  $('aiKey').textContent = ai.key ? `${ai.key} ${ai.scale || ''}` : '—';
+  $('aiNotes').innerHTML = (ai.notes || []).map((n, i) =>
+    `<span style="${i === s.step % ai.notes.length ? 'color:#00DCFF;font-weight:700' : ''}">${noteName(n)}</span>`).join(' ');
+  $('aiReason').textContent = ai.reason ? `“${ai.reason}”` : '—';
+  const inp = ai.inputs;
+  $('aiInputs').textContent = inp
+    ? `Asked with: ${inp.bpm} BPM, hand height ${inp.hand_y}, spread ${inp.hand_spread}, speed ${inp.hand_velocity >= 0 ? '+' : ''}${inp.hand_velocity}/s · phrase from step ${ai.phrase_step}`
+    : '';
+}
+
+function setSwarm(n) {
+  swarmTotal = n;
+  document.querySelectorAll('.size-btn').forEach(b => b.dataset.active = String(+b.dataset.size === n));
+  $('sizeNote').textContent = n === N
+    ? 'same packet, every robot works out its own position'
+    : `${n - 1} virtual robots, still one ~95-byte packet per beat`;
+  if (S) renderPanel(S);
+}
+document.querySelectorAll('.size-btn').forEach(b => b.addEventListener('click', () => setSwarm(+b.dataset.size)));
+setSwarm(5);
+
+// controls
+$('runDemoBtn').addEventListener('click', () => {
+  if (live) sendControl({ demo: !demoStages.has(S?.demo_stage) });
+});
+$('loss').addEventListener('input', e => { sendControl({ packet_loss_pct: +e.target.value }); $('lossVal').textContent = e.target.value + '%'; });
+$('blackoutBtn').addEventListener('click', () => sendControl({ blackout: !(S && S.blackout) }));
+document.querySelectorAll('.rule-btn').forEach(b => b.addEventListener('click', () => sendControl({ override_rule: b.dataset.rule || null })));
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+  const map = { '1': 'pulse', '2': 'orbit', '3': 'figure8' };
+  if (map[e.key]) sendControl({ override_rule: map[e.key] });
+  else if (e.key === '0') sendControl({ override_rule: null });
+  else if (e.key.toLowerCase() === 'b') sendControl({ blackout: !(S && S.blackout) });
+  else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    const v = Math.max(0, Math.min(100, (S ? S.packet_loss_pct : 0) + (e.key === 'ArrowUp' ? 10 : -10)));
+    sendControl({ packet_loss_pct: v });
+  }
+});
+
+// ===========================================================================
+// Web Audio: swarm groove on the true beat, a blip on the physical robot's beat.
+// In sync they land together; under packet loss you hear them phase apart.
+// ===========================================================================
+let AC = null, master = null;
+const MELODY_NOTES = [60, 63, 65, 67, 69]; // C Dorian pentatonic, one pitch per robot
+const motifIndex = step => ((step % MELODY_NOTES.length) + MELODY_NOTES.length) % MELODY_NOTES.length;
+let audioEnabled = false;
+
+$('audioBtn').addEventListener('click', async () => {
+  const button = $('audioBtn');
+  button.disabled = true;
+  try {
+    if (audioEnabled) {
+      await AC.suspend();
+      audioEnabled = false;
+      button.textContent = '🔈 Muted';
+      return;
+    }
+
+    if (!AC) {
+      AC = new AudioContext();
+      master = AC.createGain();
+      master.gain.value = 0.5;
+      master.connect(AC.destination);
+    }
+
+    await AC.resume();
+    audioEnabled = true;
+    button.textContent = '🔊 Audio on (click to mute)';
+  } catch {
+    button.textContent = 'Audio unavailable · click to retry';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+const SEMI = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+function chordNotes(name) {
+  const m = /^([A-G])([#b]?)(maj|m|dim|aug)?/.exec(name || 'C') || ['', 'C', '', ''];
+  let root = 48 + SEMI[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0);
+  const iv = m[3] === 'm' ? [0, 3, 7] : m[3] === 'dim' ? [0, 3, 6] : m[3] === 'aug' ? [0, 4, 8] : [0, 4, 7];
+  return iv.map(x => root + x);
+}
+const hz = midi => 440 * Math.pow(2, (midi - 69) / 12);   // same formula as robot/main.py
+const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const noteName = n => NAMES[((n % 12) + 12) % 12] + (Math.floor(n / 12) - 1);
+
+function tone(freq, dur, type = 'sine', vol = 0.2, pan = 0, when = 0) {
+  if (!AC || AC.state !== 'running') return;
+  const t0 = AC.currentTime + when, o = AC.createOscillator(), g = AC.createGain(), p = AC.createStereoPanner();
+  o.type = type; o.frequency.value = freq; p.pan.value = pan;
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(p).connect(master); o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function kick() {
+  if (!AC || AC.state !== 'running') return;
+  const t0 = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  o.frequency.setValueAtTime(150, t0); o.frequency.exponentialRampToValueAtTime(40, t0 + 0.15);
+  g.gain.setValueAtTime(0.8, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.25);
+  o.connect(g).connect(master); o.start(t0); o.stop(t0 + 0.3);
+}
+function hat(vol = 0.08, delay = 0) {
+  if (!AC || AC.state !== 'running') return;
+  const b = AC.createBuffer(1, AC.sampleRate * 0.05, AC.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+  const s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  f.type = 'highpass'; f.frequency.value = 6000; g.gain.value = vol; s.buffer = b;
+  s.connect(f).connect(g).connect(master); s.start(AC.currentTime + delay);
+}
+// Clean synth voice: two detuned oscillators through a closing low-pass
+function synthNote(freq, dur, vol = 0.18) {
+  if (!AC || AC.state !== 'running') return;
+  const waveform = {
+    bright: 'sawtooth',
+    soft: 'sine',
+    retro: 'square',
+  }[$('timbreSelect').value] || 'sawtooth';
+  const t0 = AC.currentTime, f = AC.createBiquadFilter(), g = AC.createGain();
+  f.type = 'lowpass'; f.Q.value = 4;
+  f.frequency.setValueAtTime(freq * 8, t0); f.frequency.exponentialRampToValueAtTime(freq * 1.5, t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  [-4, 4].forEach(cents => {
+    const o = AC.createOscillator(); o.type = waveform; o.frequency.value = freq; o.detune.value = cents;
+    o.connect(f); o.start(t0); o.stop(t0 + dur + 0.05);
+  });
+  f.connect(g).connect(master);
+}
+function cosmicNote(frequency, beatSeconds) {
+  const duration = Math.min(0.65, beatSeconds * 0.95);
+  tone(frequency, duration, 'sine', 0.23);
+  tone(frequency * 2, duration * 0.58, 'sine', 0.045);
+  for (let echo = 1; echo <= 4; echo++) {
+    const pan = echo % 2 ? -0.65 : 0.65;
+    tone(frequency, duration, 'sine', 0.115 * 0.52 ** (echo - 1), pan, beatSeconds * 0.75 * echo);
+  }
+}
+
+function onSwarmBeat(s) {
+  if (!audioEnabled || AC.state !== 'running') return;
+  const noteIndex = motifIndex(s.step);
+  const beatSeconds = beatMs(s.bpm) / 1000;
+  const isKickBeat = s.step % 2 === 0;
+  if (isKickBeat) kick();
+  // The reference has recurring eighth-note attacks and a two-beat bass pattern.
+  hat(isKickBeat ? 0.04 : 0.075);
+  hat(isKickBeat ? 0.065 : 0.04, beatSeconds * 0.5);
+  const frequency = hz(MELODY_NOTES[noteIndex]);
+  if ($('timbreSelect').value === 'cosmic') cosmicNote(frequency, beatSeconds);
+  else synthNote(frequency, Math.min(0.9, beatSeconds * 0.9));
+}
+// The real robot's own beat: only audible when it has drifted, so you hear the phasing
+function onPhysicalBeat(step, drift) {
+  if (drift > 0.25) tone(1760, 0.05, 'square', 0.035, 0.7);
+}
+// SFX: rising harmonic chime when the swarm resyncs
+function sfxChime() {
+  [0, 4, 7, 12, 16].forEach((iv, i) => tone(hz(72 + iv), 0.9, 'sine', 0.09, 0.3, i * 0.07));
+}
+// SFX: low radar blip when a beat's packets were all dropped
+function sfxRadar() {
+  if (!AC || AC.state !== 'running') return;
+  const t0 = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(220, t0); o.frequency.exponentialRampToValueAtTime(110, t0 + 0.25);
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.35);
+  o.connect(g).connect(master); o.start(t0); o.stop(t0 + 0.4);
+}
+// SFX: static burst + falling tone when BLACKOUT triggers
+function sfxStatic() {
+  if (!AC || AC.state !== 'running') return;
+  const len = AC.sampleRate * 0.6, b = AC.createBuffer(1, len, AC.sampleRate), dd = b.getChannelData(0);
+  for (let i = 0; i < len; i++) dd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2) * (Math.random() < 0.3 ? 1 : 0.3);
+  const src = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  f.type = 'bandpass'; f.frequency.value = 1200; f.Q.value = 0.7; g.gain.value = 0.35; src.buffer = b;
+  src.connect(f).connect(g).connect(master); src.start();
+  const t0 = AC.currentTime, o = AC.createOscillator(), og = AC.createGain();
+  o.frequency.setValueAtTime(440, t0); o.frequency.exponentialRampToValueAtTime(60, t0 + 0.6);
+  og.gain.setValueAtTime(0.15, t0); og.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.6);
+  o.connect(og).connect(master); o.start(t0); o.stop(t0 + 0.65);
+}
+
+// go
+fit(); badge(); if (SYNC_MODE) initUSBBridge(); else connect(); requestAnimationFrame(frame);
+</script>
+<script type="module" src="./swarm-lattice.mjs"></script>
+</body>
+</html>
+
