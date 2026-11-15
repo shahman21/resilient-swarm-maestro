@@ -13,7 +13,7 @@
   html,body { background:var(--bg); color:var(--text); }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; }
   .lbl { color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
-  .rule-btn[data-active="true"] { background:#e6e9ef; color:#0b0d12; }
+  .rule-btn[data-active="true"], .size-btn[data-active="true"] { background:#e6e9ef; color:#0b0d12; }
   #demoStage { font-size:clamp(1.4rem, 3vw, 2.5rem); font-weight:750; color:var(--cyan); }
   #demoStage[data-fault="true"] { color:var(--amber); }
   header h1 { font-size:clamp(1.5rem, 3vw, 2.5rem); }
@@ -181,6 +181,14 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline:2px so
         <span class="lbl">Swarm arena</span>
         <span class="text-xs" style="color:var(--muted)">dotted ring = where the physical mBot2 <em>should</em> be</span>
       </div>
+      <div class="flex flex-wrap items-center gap-2 text-sm">
+        <span class="lbl">Swarm size</span>
+        <button class="size-btn px-2.5 py-1 rounded-md border border-gray-600" data-size="5">5</button>
+        <button class="size-btn px-2.5 py-1 rounded-md border border-gray-600" data-size="21">21</button>
+        <button class="size-btn px-2.5 py-1 rounded-md border border-gray-600" data-size="101">101</button>
+        <button class="size-btn px-2.5 py-1 rounded-md border border-gray-600" data-size="501">501</button>
+        <span id="sizeNote" class="text-xs" style="color:var(--muted)">same packet, every robot works out its own position</span>
+      </div>
       <div class="lattice-stage">
         <canvas id="arena" class="w-full aspect-square max-h-[78vh] mx-auto"></canvas>
         <canvas id="lattice" aria-hidden="true"></canvas>
@@ -278,10 +286,24 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline:2px so
         <div class="lbl">Bandwidth</div>
         <div class="flex justify-between"><span>Rule packet</span><span id="bwPacket" class="font-mono">—</span></div>
         <div class="flex justify-between"><span>Swarm uplink now</span><span id="bwNow" class="font-mono">—</span></div>
-        <div class="flex justify-between" style="color:var(--muted)"><span>Same packet, 500 robots (broadcast)</span><span id="bwRule500" class="font-mono">—</span></div>
-        <div class="flex justify-between" style="color:var(--muted)"><span>Streaming x,y at 30 Hz, 500 robots</span><span id="bwStream500" class="font-mono">—</span></div>
+        <div class="flex justify-between"><span>Rule broadcast, <span class="swarmN">5</span> robots</span><span id="bwRule500" class="font-mono">—</span></div>
+        <div class="flex justify-between" style="color:var(--muted)"><span>Streaming x,y at 30 Hz, <span class="swarmN">5</span> robots</span><span id="bwStream500" class="font-mono">—</span></div>
+        <div class="flex justify-between font-semibold"><span>Traffic saved</span><span id="bwSaved" class="font-mono" style="color:var(--green)">—</span></div>
       </div>
 
+      <div class="panel p-4 text-sm flex flex-col gap-2">
+        <div class="flex justify-between items-center">
+          <span class="lbl">AI conductor · this phrase</span>
+          <span id="aiSource" class="text-xs px-2 py-0.5 rounded-md bg-gray-700">—</span>
+        </div>
+        <div class="flex flex-wrap gap-x-4 gap-y-1">
+          <span>Move: <b id="aiRule">—</b> <span id="aiRuleBy" class="text-xs" style="color:var(--muted)"></span></span>
+          <span>Key: <b id="aiKey">—</b></span>
+        </div>
+        <div>Notes: <span id="aiNotes" class="font-mono">—</span></div>
+        <div id="aiReason" class="italic" style="color:var(--text)">—</div>
+        <div id="aiInputs" class="text-xs" style="color:var(--muted)"></div>
+      </div>
     </aside>
   </main>
 </div>
@@ -292,7 +314,10 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline:2px so
 // t = continuous beat time (step + fraction), i = robot index, n = robot count
 // returns {x, y} in arena units, centre (0,0), radius 1
 // ===========================================================================
-const N = 5;                 // index 0 = physical mBot2, 1..4 virtual
+const N = 5;                 // index 0 = physical mBot2, 1..4 virtual (the named robots)
+// Scale demo: extra virtual robots run the SAME rule from the SAME packet. Nothing extra is
+// sent per robot; each one only needs its index and the swarm size to work out where to be.
+let swarmTotal = 5;
 const RULE_COLOUR = { pulse:'#00c8ff', orbit:'#2850ff', figure8:'#dc00dc' };
 const CYAN = '#00DCFF', AMBER = '#FF8C00';   // physical mBot2 LED colours (robot/main.py)
 
@@ -624,14 +649,16 @@ function frame(now) {
   }
 
   for (let i = 0; i < N; i++) {
-    const target = i === 0 ? choreo(ph.rule, ph.t, 0) : choreo(S.rule, t, i);
+    // the four named robots take evenly spaced slots in whatever size swarm is showing
+    const slot = i === 0 ? 0 : Math.round(i * swarmTotal / N);
+    const target = i === 0 ? choreo(ph.rule, ph.t, 0, swarmTotal) : choreo(S.rule, t, slot, swarmTotal);
     const dp = disp[i], nx = dp.x + (target.x - dp.x) * k, ny = dp.y + (target.y - dp.y) * k;
     if (Math.hypot(nx - dp.x, ny - dp.y) > 1e-4) dp.h = Math.atan2(ny - dp.y, nx - dp.x);
     dp.x = nx; dp.y = ny;
     trails[i].push({ x: nx, y: ny }); if (trails[i].length > 40) trails[i].shift();
   }
   // ghost = where physical should be
-  const g = choreo(S.rule, t, 0);
+  const g = choreo(S.rule, t, 0, swarmTotal);
   ghostDisp.x += (g.x - ghostDisp.x) * k; ghostDisp.y += (g.y - ghostDisp.y) * k;
 
   // Space the trail dots by distance so they remain separated at any BPM.
@@ -667,6 +694,21 @@ function frame(now) {
     ctx.fillText('target', gS.sx, gS.sy - 36 * d);
   }
 
+  // extra swarm: cheap glowing dots, positions straight from the shared rule
+  if (swarmTotal > N) {
+    const dotR = (swarmTotal > 200 ? 2.2 : swarmTotal > 50 ? 3 : 4.5) * d * (1 + 0.5 * Math.exp(-5 * fBeat));
+    ctx.fillStyle = swarmColour; ctx.shadowColor = swarmColour; ctx.shadowBlur = 8 * d;
+    ctx.globalAlpha = 0.85;
+    const named = new Set([1, 2, 3, 4].map(i => Math.round(i * swarmTotal / N)));
+    for (let i = 1; i < swarmTotal; i++) {
+      if (named.has(i)) continue;   // drawn as a named sibling below
+      const q = choreo(S.rule, t, i, swarmTotal);
+      const depth = 0.86 + 0.28 * ((i * 0.618034) % 1);   // fixed per robot, gives the cloud some depth
+      const sp = toScreen({ x: q.x * depth, y: q.y * depth });
+      ctx.beginPath(); ctx.arc(sp.sx, sp.sy, dotR, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  }
   const fPh = ph.t - Math.floor(ph.t);
   const soundingRobot = activeNote === 0 ? pS : toScreen(disp[activeNote]);
   const notePhase = activeNote === 0 ? fPh : fBeat;
@@ -826,8 +868,12 @@ function renderPanel(s) {
   const sps = s.sends_per_sec || (s.bpm / 60);
   $('bwPacket').textContent = `${s.packet_bytes} bytes`;
   $('bwNow').textContent = fmtBytes(s.packet_bytes * sps);
-  $('bwRule500').textContent = fmtBytes(s.packet_bytes * sps);   // one broadcast reaches everyone
-  $('bwStream500').textContent = fmtBytes(500 * 30 * 32);         // ~32 B per x,y,heading update
+  const ruleBps = s.packet_bytes * sps, streamBps = swarmTotal * 30 * 32;   // ~32 B per x,y,heading update
+  $('bwRule500').textContent = fmtBytes(ruleBps);                  // one broadcast reaches everyone
+  $('bwStream500').textContent = fmtBytes(streamBps);
+  $('bwSaved').textContent = ruleBps ? `${Math.round(streamBps / ruleBps).toLocaleString()}× less` : '—';
+  document.querySelectorAll('.swarmN').forEach(e => e.textContent = swarmTotal);
+  renderAi(s);
   if (s.music) $('music').textContent = `${s.music.key} ${s.music.scale} · ${s.music.chords.join(' – ')}`;
   $('historyTitle').textContent = history
     ? `Delivery % / phase drift (${history.bucket_s} s buckets)`
@@ -857,6 +903,41 @@ function drawChart(hist, slots) {
   line(deliv, 100, '#2ecc71');
   line(drift, Math.max(4, ...drift), '#ff3b3b');
 }
+
+function renderAi(s) {
+  const ai = s.ai;
+  if (!ai) {   // older hub or offline sim: show what we know
+    $('aiSource').textContent = live ? 'hub' : 'offline sim';
+    $('aiReason').textContent = s.ai_commentary || '—';
+    return;
+  }
+  const gem = ai.source === 'gemini';
+  $('aiSource').textContent = gem ? `Gemini · ${ai.model || ''}` : 'fallback table';
+  $('aiSource').style.background = gem ? '#1e3a8a' : '#3f3f46';
+  $('aiRule').textContent = ai.rule || s.rule;
+  $('aiRuleBy').textContent = {
+    ai: '(Gemini is driving)', hand: '(your hand overrides)', judge: '(judge override)', unchanged: '(kept)'
+  }[ai.rule_by] || '';
+  $('aiKey').textContent = ai.key ? `${ai.key} ${ai.scale || ''}` : '—';
+  $('aiNotes').innerHTML = (ai.notes || []).map((n, i) =>
+    `<span style="${i === s.step % ai.notes.length ? 'color:#00DCFF;font-weight:700' : ''}">${noteName(n)}</span>`).join(' ');
+  $('aiReason').textContent = ai.reason ? `“${ai.reason}”` : '—';
+  const inp = ai.inputs;
+  $('aiInputs').textContent = inp
+    ? `Asked with: ${inp.bpm} BPM, hand height ${inp.hand_y}, spread ${inp.hand_spread}, speed ${inp.hand_velocity >= 0 ? '+' : ''}${inp.hand_velocity}/s · phrase from step ${ai.phrase_step}`
+    : '';
+}
+
+function setSwarm(n) {
+  swarmTotal = n;
+  document.querySelectorAll('.size-btn').forEach(b => b.dataset.active = String(+b.dataset.size === n));
+  $('sizeNote').textContent = n === N
+    ? 'same packet, every robot works out its own position'
+    : `${n - 1} virtual robots, still one ~95-byte packet per beat`;
+  if (S) renderPanel(S);
+}
+document.querySelectorAll('.size-btn').forEach(b => b.addEventListener('click', () => setSwarm(+b.dataset.size)));
+setSwarm(5);
 
 // controls
 $('runDemoBtn').addEventListener('click', () => {
