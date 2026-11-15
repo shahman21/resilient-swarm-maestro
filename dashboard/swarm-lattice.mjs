@@ -82,7 +82,6 @@ function switchView(nextView) {
   stage.classList.toggle('globe-view', view === 'globe');
   focus.setAttribute('aria-pressed', String(view === 'globe'));
   focus.textContent = view === 'globe' ? 'Swarm View' : 'Globe View';
-  robots.forEach(({ group }) => { group.userData.positioned = false; });
   if (view === 'globe' && shape !== 0) {
     shape = 0;
     morph.textContent = 'Morph · ' + shapes[shape];
@@ -151,7 +150,7 @@ const rings = Array.from({ length: 6 }, () => {
   return ring;
 });
 
-window.renderSwarmLattice = (centres, now, beat) => {
+window.renderSwarmLattice = (now, beat) => {
   const globeView = view === 'globe';
   const rect = overlay.getBoundingClientRect();
   const ratio = Math.min(devicePixelRatio || 1, 2);
@@ -180,15 +179,13 @@ window.renderSwarmLattice = (centres, now, beat) => {
   const visible = Math.round(count * Number(density.value) / 100);
   positions.forEach((point, i) => point.lerp(topologies[shape][i], blend));
   const shortSide = Math.min(width, height);
-  const radius = globeView ? shortSide * 0.43 : Math.max(20, Math.min(72, shortSide * 0.105));
+  const radius = shortSide * 0.43;
   robots.forEach(({ group, cloud, edges, nodes, links }, index) => {
-    if (globeView || !frozen || !group.userData.positioned) {
-      const centre = centres[index];
-      group.position.set(globeView ? width / 2 : centre.x * width, globeView ? height / 2 : centre.y * height, 0);
-      group.userData.positioned = true;
-    }
+    group.visible = globeView;
+    if (!globeView) return;
+    group.position.set(width / 2, height / 2, 0);
     group.rotation.set(0.45 + index * 0.22 + viewX, angle + index * 1.2 + viewY, angle * 0.46);
-    group.scale.setScalar(radius * (globeView ? globeScales[index] : 1) * (1 + 0.09 * beatEnergy));
+    group.scale.setScalar(radius * globeScales[index] * (1 + 0.09 * beatEnergy));
     const pointAt = index => positions[Math.floor((index % visible) * count / visible)];
     for (let i = 0; i < visible; i++) {
       const point = pointAt(i);
@@ -216,7 +213,7 @@ window.renderSwarmLattice = (centres, now, beat) => {
   });
   if (renderer.getContext().isContextLost()) return false;
   renderer.render(scene, camera);
-  return true;
+  return globeView;
 };
 dock.hidden = false;
 

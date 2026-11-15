@@ -96,12 +96,16 @@ body {
 #runDemoBtn { background:var(--cyan); color:#081b18; }
 .player-layout { display:grid; grid-template-columns:minmax(0,1fr); gap:1rem; align-items:start; }
 @media (min-width:1024px) {
-  .player-layout { grid-template-columns:minmax(0,1fr) minmax(20rem,24rem); }
+  .player-layout > .player-sidebar {
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+    align-items:start;
+  }
 }
 .panel { border-radius:1.65rem; padding:1.1rem; }
 .player-stage {
   gap:.65rem;
-  background:radial-gradient(ellipse at 50% 37%, #56231d 0%, #351916 45%, #171212 79%);
+  background:radial-gradient(ellipse at 34% 36%, #20182e, #17131e 44%, #110f14 82%);
 }
 .player-stage > :first-child { gap:.8rem; }
 .lbl { color:var(--muted); font-size:.82rem; font-weight:500; letter-spacing:0; text-transform:none; }
@@ -110,7 +114,7 @@ body {
   min-width:0;
   background:radial-gradient(circle, #431d1c22 0 40%, transparent 69%);
 }
-.player-stage .lattice-stage:not(.globe-view) #arena { max-height:64vh; }
+.player-stage .lattice-stage:not(.globe-view) #arena { max-height:128vh; }
 .player-stage .lattice-stage.globe-view {
   background:radial-gradient(ellipse at center, #422522, #211715 56%, #110d0e 82%);
 }
@@ -471,86 +475,79 @@ function fit() {
 }
 addEventListener('resize', fit);
 
-function drawRobot(p, colour, opts = {}) {
-  const { size = 18, label = '', ghost = false, glow = 1 } = opts;
-  ctx.save(); ctx.translate(p.sx, p.sy); ctx.rotate(p.h);
-  if (ghost) {
-    ctx.setLineDash([5, 5]); ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 2;
-    ctx.strokeRect(-size, -size * 0.8, size * 2, size * 1.6);
-  } else {
-    ctx.shadowColor = colour; ctx.shadowBlur = 25 * glow;
-    ctx.fillStyle = '#1c2230'; ctx.strokeStyle = colour; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.roundRect(-size, -size * 0.8, size * 2, size * 1.6, 6); ctx.fill(); ctx.stroke();
-    ctx.shadowBlur = 0; ctx.fillStyle = colour;
-    ctx.beginPath(); ctx.moveTo(size + 6, 0); ctx.lineTo(size - 4, -6); ctx.lineTo(size - 4, 6); ctx.fill();
-  }
-  ctx.restore();
-  if (label) {
-    ctx.fillStyle = '#e6e9ef'; ctx.font = `${12 * devicePixelRatio}px ui-sans-serif`; ctx.textAlign = 'center';
-    ctx.fillText(label, p.sx, p.sy + size * 1.9);
-  }
-}
-
-const fibreColours = [
-  ['#fff38a', '#ff529e'],
-  ['#c6ff9a', '#23dfb2'],
-  ['#ffd6ff', '#b362ff'],
-  ['#9cf7ff', '#458dff']
-];
-
-function drawFibreRobot(position, index, now, beatPhase, scale) {
-  const time = now / 1000;
-  const pulse = Math.exp(-5 * beatPhase);
-  const [inner, outer] = fibreColours[index - 1];
-  const radius = (32 + 12 * pulse) * scale;
-
+function drawSnakeHead(p, color, size, label, flash) {
   ctx.save();
-  ctx.translate(position.sx, position.sy);
-  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-  core.addColorStop(0, inner + 'cf');
-  core.addColorStop(0.55, outer + '65');
-  core.addColorStop(1, outer + '00');
-  ctx.fillStyle = core;
+  ctx.translate(p.sx, p.sy);
+  ctx.rotate(p.h);
+  const skin = ctx.createRadialGradient(size * 0.28, -size * 0.37, 0, 0, 0, size * 1.2);
+  skin.addColorStop(0, '#efffff');
+  skin.addColorStop(0.37, color);
+  skin.addColorStop(1, '#112043');
+  ctx.fillStyle = skin;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = size * (0.55 + flash);
   ctx.beginPath();
-  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, size * 1.13, size * 0.91, 0, 0, Math.PI * 2);
   ctx.fill();
-
-  // Stable strand offsets make the fibres sway smoothly between beats.
-  for (let i = 0; i < 120; i++) {
-    const angle = i / 120 * Math.PI * 2;
-    const seed = i * 2.39996 + index;
-    const length = radius * (0.85 + 0.35 * Math.sin(seed));
-    const sway = 0.23 * Math.sin(time * 2.4 + seed);
-    const tip = length * (1 + 0.14 * Math.sin(angle * 3 + time * 1.2));
-    const x = Math.cos(angle), y = Math.sin(angle);
-    const highlight = i % 4 === 0;
-
-    ctx.strokeStyle = highlight ? inner : outer;
-    ctx.globalAlpha = 0.35 + 0.30 * pulse;
-    ctx.lineWidth = (highlight ? 1.1 : 0.65) * scale;
+  ctx.shadowBlur = 0;
+  for (const side of [-1, 1]) {
+    const y = side * size * 0.44;
+    ctx.fillStyle = '#f6fbff';
     ctx.beginPath();
-    ctx.moveTo(x * radius * 0.25, y * radius * 0.25);
-    ctx.quadraticCurveTo(
-      x * tip * 0.75, y * tip * 0.75,
-      Math.cos(angle + sway) * tip, Math.sin(angle + sway) * tip
-    );
-    ctx.stroke();
+    ctx.arc(size * 0.48, y, size * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#080d1c';
+    ctx.beginPath();
+    ctx.arc(size * 0.60, y, size * 0.20, 0, Math.PI * 2);
+    ctx.fill();
   }
+  ctx.restore();
+  drawArenaLabel(label, p.sx, p.sy + size * 1.6);
+}
 
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = '#e6e9ef';
-  ctx.font = `${12 * scale}px ui-sans-serif`;
+const siblingColors = ['#ff6dcc', '#63f5a9', '#b083ff', '#ffca64'];
+
+function drawArenaLabel(label, x, y) {
+  ctx.save();
+  ctx.font = `500 ${12 * devicePixelRatio}px "DM Sans", sans-serif`;
   ctx.textAlign = 'center';
-  ctx.fillText(`virtual ${index}`, 0, 62 * scale);
+  ctx.lineWidth = 3 * devicePixelRatio;
+  ctx.strokeStyle = '#090e1e';
+  ctx.strokeText(label, x, y);
+  ctx.fillStyle = '#e9f3ff';
+  ctx.fillText(label, x, y);
   ctx.restore();
 }
 
-function drawScoreBackdrop(cx, cy, radius) {
+function drawSiblingDot(position, index, scale, flash) {
+  const { sx, sy } = position;
+  const radius = (13 + 4 * flash) * scale;
+  const color = siblingColors[index - 1];
+  const haloRadius = radius * (2.1 + flash * 0.6);
+  const halo = ctx.createRadialGradient(sx, sy, radius * 0.35, sx, sy, haloRadius);
+  halo.addColorStop(0, color + 'b0');
+  halo.addColorStop(1, color + '00');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(sx, sy, haloRadius, 0, Math.PI * 2);
+  ctx.fill();
+  const body = ctx.createRadialGradient(sx - radius * 0.29, sy - radius * 0.3, 0, sx, sy, radius);
+  body.addColorStop(0, '#ffffff');
+  body.addColorStop(0.55, color);
+  body.addColorStop(1, color + '88');
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  drawArenaLabel(`Sibling ${index}`, sx, sy + radius + 15 * scale);
+}
+
+function drawScoreBackdrop(cx, cy, radius, activeNote) {
   const spacing = radius * 0.065;
   const left = cx - radius * 0.71;
   const right = cx + radius * 0.71;
   const bottom = cy + 2 * spacing;
-  const staffSteps = [-2, 0, 2, 3, 2, 0]; // C4 E♭4 G4 A4 G4 E♭4
+  const staffSteps = [-2, 0, 1, 2, 3]; // C4 E♭4 F4 G4 A4
   ctx.save();
   ctx.strokeStyle = '#a5c8ed29';
   ctx.fillStyle = '#c1dcf841';
@@ -563,6 +560,7 @@ function drawScoreBackdrop(cx, cy, radius) {
   }
   ctx.stroke();
   staffSteps.forEach((step, index) => {
+    ctx.fillStyle = index === activeNote ? '#52f3debd' : '#c1dcf841';
     const x = left + (right - left) * (index + 0.65) / staffSteps.length;
     const y = bottom - step * spacing / 2;
     ctx.beginPath();
@@ -595,14 +593,12 @@ function frame(now) {
   ctx.clearRect(0, 0, W, H);
 
   // arena + boundary tape
-  ctx.fillStyle = '#160f14be'; ctx.beginPath(); ctx.arc(cx, cy, R * 1.05, 0, 7); ctx.fill();
-  drawScoreBackdrop(cx, cy, R);
+  ctx.fillStyle = '#0b0a17ec'; ctx.beginPath(); ctx.arc(cx, cy, R * 1.05, 0, 7); ctx.fill();
   ctx.strokeStyle = '#000'; ctx.lineWidth = 10 * d; ctx.stroke();
   ctx.strokeStyle = '#88524a70'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, R * 1.05, 0, 7); ctx.stroke();
 
   const t = trueT(now), ph = physical(now);
   const k = 1 - Math.exp(-dt * 10);   // smoothing so rule switches glide instead of teleport
-  const swarmColour = RULE_COLOUR[S.rule] || '#fff';
 
   // physical LED colour: cyan when synced, amber during packet loss / blackout
   const driftNow = Math.abs(t - ph.t);
@@ -614,6 +610,8 @@ function frame(now) {
 
   // beat flash + concentric beat rings (one per step tick, coloured like the mBot2 LEDs)
   const fBeat = t - Math.floor(t);
+  const activeNote = motifIndex(clk.trueStep);
+  drawScoreBackdrop(cx, cy, R, activeNote);
   ctx.fillStyle = physLed + Math.round((1 - fBeat) * 22).toString(16).padStart(2, '0');
   ctx.beginPath(); ctx.arc(cx, cy, R * 1.05, 0, 7); ctx.fill();
   for (let j = rings.length - 1; j >= 0; j--) {
@@ -636,12 +634,21 @@ function frame(now) {
   const g = choreo(S.rule, t, 0);
   ghostDisp.x += (g.x - ghostDisp.x) * k; ghostDisp.y += (g.y - ghostDisp.y) * k;
 
-  // trails
-  trails.forEach((tr, i) => {
-    const c = i === 0 ? physLed : swarmColour;
-    ctx.strokeStyle = c + '55'; ctx.lineWidth = 2 * d; ctx.beginPath();
-    tr.forEach((q, j) => { const s = toScreen(q); j ? ctx.lineTo(s.sx, s.sy) : ctx.moveTo(s.sx, s.sy); });
-    ctx.stroke();
+  // Space the trail dots by distance so they remain separated at any BPM.
+  trails.forEach((trail, i) => {
+    let distance = 0;
+    const color = i === 0 ? physLed : siblingColors[i - 1];
+    for (let j = trail.length - 2; j >= 0; j--) {
+      const p = toScreen(trail[j]), next = toScreen(trail[j + 1]);
+      distance += Math.hypot(p.sx - next.sx, p.sy - next.sy);
+      if (distance < (i === 0 ? 21 : 17) * d) continue;
+      distance = 0;
+      const age = j / trail.length;
+      ctx.fillStyle = color + Math.round((0.18 + 0.53 * age) * 255).toString(16).padStart(2, '0');
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, (i === 0 ? 4 + age * 3 : 2 + age * 2) * d, 0, Math.PI * 2);
+      ctx.fill();
+    }
   });
 
   // target ghost ring: always shown, drift line when the physical robot is off target
@@ -660,17 +667,29 @@ function frame(now) {
     ctx.fillText('target', gS.sx, gS.sy - 36 * d);
   }
 
-  const latticeCentres = disp.slice(1).map(point => {
-    const { sx, sy } = toScreen(point);
-    return { x: sx / W, y: sy / H };
-  });
-  if (!window.renderSwarmLattice?.(latticeCentres, now, fBeat)) {
+  const fPh = ph.t - Math.floor(ph.t);
+  const soundingRobot = activeNote === 0 ? pS : toScreen(disp[activeNote]);
+  const notePhase = activeNote === 0 ? fPh : fBeat;
+  const noteRadius = (activeNote === 0 ? 25 : 22) * d;
+  ctx.save();
+  ctx.globalAlpha = (1 - notePhase) ** 1.5;
+  ctx.strokeStyle = activeNote === 0 ? physLed : '#52f3de';
+  ctx.lineWidth = (activeNote === 0 ? 3 : 4) * d;
+  ctx.shadowColor = ctx.strokeStyle;
+  ctx.shadowBlur = 19 * d;
+  ctx.beginPath();
+  ctx.arc(soundingRobot.sx, soundingRobot.sy, noteRadius + 13 * d * notePhase, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  const globeView = window.renderSwarmLattice?.(now, fBeat);
+  if (!globeView) {
     for (let i = 1; i < N; i++) {
-      drawFibreRobot(toScreen(disp[i]), i, now, fBeat, d);
+      drawSiblingDot(toScreen(disp[i]), i, d, i === activeNote ? (1 - fBeat) ** 1.4 : 0);
     }
   }
-  const fPh = ph.t - Math.floor(ph.t);
-  drawRobot(pS, physLed, { size: 20 * d, label: ph.real ? 'mBot2 (physical)' : 'mBot2 (estimated)', glow: 1.4 - fPh * 0.8 });
+  drawSnakeHead(pS, physLed, 25 * d, ph.real ? 'mBot2 (physical)' : 'mBot2 (estimated)',
+    activeNote === 0 ? 1 - fPh : 0);
 
   // physical robot's own beat -> audible phasing when out of sync
   const ps = Math.floor(ph.t);
@@ -864,7 +883,8 @@ addEventListener('keydown', e => {
 // In sync they land together; under packet loss you hear them phase apart.
 // ===========================================================================
 let AC = null, master = null;
-const MELODY_NOTES = [60, 63, 67, 69, 67, 63]; // C4 E♭4 G4 A4 G4 E♭4
+const MELODY_NOTES = [60, 63, 65, 67, 69]; // C Dorian pentatonic, one pitch per robot
+const motifIndex = step => ((step % MELODY_NOTES.length) + MELODY_NOTES.length) % MELODY_NOTES.length;
 let audioEnabled = false;
 
 $('audioBtn').addEventListener('click', async () => {
@@ -921,13 +941,13 @@ function kick() {
   g.gain.setValueAtTime(0.8, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.25);
   o.connect(g).connect(master); o.start(t0); o.stop(t0 + 0.3);
 }
-function hat(vol = 0.08) {
+function hat(vol = 0.08, delay = 0) {
   if (!AC || AC.state !== 'running') return;
   const b = AC.createBuffer(1, AC.sampleRate * 0.05, AC.sampleRate), d = b.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
   const s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
   f.type = 'highpass'; f.frequency.value = 6000; g.gain.value = vol; s.buffer = b;
-  s.connect(f).connect(g).connect(master); s.start();
+  s.connect(f).connect(g).connect(master); s.start(AC.currentTime + delay);
 }
 // Clean synth voice: two detuned oscillators through a closing low-pass
 function synthNote(freq, dur, vol = 0.18) {
@@ -960,11 +980,13 @@ function cosmicNote(frequency, beatSeconds) {
 
 function onSwarmBeat(s) {
   if (!audioEnabled || AC.state !== 'running') return;
-  const noteIndex = ((s.step % MELODY_NOTES.length) + MELODY_NOTES.length) % MELODY_NOTES.length;
+  const noteIndex = motifIndex(s.step);
   const beatSeconds = beatMs(s.bpm) / 1000;
   const isKickBeat = s.step % 2 === 0;
   if (isKickBeat) kick();
-  hat(isKickBeat ? 0.035 : 0.07);
+  // The reference has recurring eighth-note attacks and a two-beat bass pattern.
+  hat(isKickBeat ? 0.04 : 0.075);
+  hat(isKickBeat ? 0.065 : 0.04, beatSeconds * 0.5);
   const frequency = hz(MELODY_NOTES[noteIndex]);
   if ($('timbreSelect').value === 'cosmic') cosmicNote(frequency, beatSeconds);
   else synthNote(frequency, Math.min(0.9, beatSeconds * 0.9));
