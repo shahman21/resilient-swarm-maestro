@@ -550,7 +550,7 @@ function drawScoreBackdrop(cx, cy, radius) {
   const left = cx - radius * 0.71;
   const right = cx + radius * 0.71;
   const bottom = cy + 2 * spacing;
-  const staffSteps = [-2, 0, 2, 3, 2, 1]; // C4 E4 G4 A4 G4 F#4
+  const staffSteps = [-2, 0, 2, 3, 2, 0]; // C4 E♭4 G4 A4 G4 E♭4
   ctx.save();
   ctx.strokeStyle = '#a5c8ed29';
   ctx.fillStyle = '#c1dcf841';
@@ -576,11 +576,11 @@ function drawScoreBackdrop(cx, cy, radius) {
       ctx.lineTo(x + spacing * 0.65, y);
     }
     ctx.stroke();
-    if (index === 5) {
+    if (index === 1) {
       ctx.font = `${spacing * 1.1}px system-ui`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('♯', x - spacing * 0.78, y);
+      ctx.fillText('♭', x - spacing * 0.78, y);
     }
   });
   ctx.restore();
@@ -864,7 +864,7 @@ addEventListener('keydown', e => {
 // In sync they land together; under packet loss you hear them phase apart.
 // ===========================================================================
 let AC = null, master = null;
-const MELODY_NOTES = [60, 64, 67, 69, 67, 66]; // C4, E4, G4, A4, G4, F#4
+const MELODY_NOTES = [60, 63, 67, 69, 67, 63]; // C4 E♭4 G4 A4 G4 E♭4
 let audioEnabled = false;
 
 $('audioBtn').addEventListener('click', async () => {
