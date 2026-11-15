@@ -16,6 +16,21 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 
 Open http://localhost:8000. The dashboard is served by the hub. You can also open `dashboard/index.html` straight from disk: with no hub running it switches to offline mode and simulates the hub in the browser.
 
+### Windows (demo laptop)
+
+Use Python 3.12 (python.org, tick "Add Python to PATH"); newer versions may not work with the Ultraleap bindings. In PowerShell:
+
+```powershell
+cd resilient-swarm-maestro\hub
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+$env:DEMO_TIME_SCALE="0.5"     # optional: Run Demo in about 27 s instead of 53 s
+.venv\Scripts\uvicorn server:app --port 8000
+```
+
+Allow Python through Windows Firewall if asked. Voice callouts play through PowerShell (ElevenLabs mp3 via the built-in media player, or the built-in Windows voice without a key), so nothing extra needs installing. The Ultraleap bindings need Visual Studio Build Tools (C++) to compile on Windows; without them the hub uses a simulated hand and the dashboard keys `1` `2` `3` switch moves.
+
 Everything degrades gracefully:
 
 | Missing | What happens |

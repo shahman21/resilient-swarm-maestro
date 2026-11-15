@@ -256,3 +256,20 @@ def test_ai_state_reports_source_reason_and_who_set_the_rule(hub):
     assert ai["inputs"] and 80 <= ai["inputs"]["bpm"] <= 150
     hub.apply_controls({"override_rule": "pulse"})
     assert hub.state()["ai"]["rule_by"] == "judge"
+
+
+def test_voice_commands_work_on_windows_and_mac(tmp_path):
+    from ai_services import VoiceAnnouncer
+
+    v = VoiceAnnouncer()
+    v.platform, v.player = "win32", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    mp3 = tmp_path / "it's.mp3"
+    play = v.play_cmd(mp3)
+    assert play[0] == v.player and play[-2] == "-Command"
+    assert "MediaPlayer" in play[-1] and "it''s.mp3" in play[-1]  # quote escaped for PowerShell
+    say = v.say_cmd("Swarm resynchronized. Don't panic")
+    assert "SpeechSynthesizer" in say[-1] and "Don''t panic" in say[-1]
+
+    v.platform, v.player = "darwin", "/usr/bin/afplay"
+    assert v.play_cmd(mp3) == ["/usr/bin/afplay", str(mp3)]
+    assert v.say_cmd("hi") == ["say", "hi"]
