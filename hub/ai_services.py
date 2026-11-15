@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -203,8 +204,17 @@ class VoiceAnnouncer:
         if self.key.startswith("your_"):
             self.key = ""
         self.voice_id = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-        self.use_say = os.getenv("VOICE_FALLBACK_SAY", "1") == "1" and shutil.which("say")
-        self.player = shutil.which("afplay") or shutil.which("ffplay") or shutil.which("mpg123")
+        self.platform = sys.platform
+        fallback_on = os.getenv("VOICE_FALLBACK_SAY", "1") == "1"
+        if self.platform == "win32":
+            # Windows has no afplay/say. PowerShell can play mp3 (WPF MediaPlayer) and speak
+            # (System.Speech), both built in, so no extra installs on the demo laptop.
+            ps = shutil.which("powershell") or shutil.which("pwsh")
+            self.player = ps
+            self.use_say = fallback_on and bool(ps)
+        else:
+            self.use_say = fallback_on and bool(shutil.which("say"))
+            self.player = shutil.which("afplay") or shutil.which("ffplay") or shutil.which("mpg123")
         self._last = 0.0
         self.CACHE.mkdir(exist_ok=True)
 
@@ -235,20 +245,49 @@ class VoiceAnnouncer:
                         if r.status_code >= 400:
                             raise RuntimeError(f"HTTP {r.status_code} {r.text[:160]}")
                         path.write_bytes(r.content)
-                await self._play([self.player, str(path)] if "ffplay" not in self.player
-                                 else [self.player, "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)])
+                await self._play(self.play_cmd(path))
                 return
             except Exception as exc:
                 print(f"[voice] ElevenLabs failed, falling back: {exc}")
         if self.use_say:
-            await self._play(["say", text])
+            await self._play(self.say_cmd(text))
+
+    @staticmethod
+    def _ps_quote(value: str) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
+    def play_cmd(self, path) -> list:
+        if self.platform == "win32":
+            script = (
+                "Add-Type -AssemblyName PresentationCore; "
+                "$p = New-Object System.Windows.Media.MediaPlayer; "
+                f"$p.Open([Uri]{self._ps_quote(Path(path).resolve())}); $p.Play(); "
+                "$i = 0; while (-not $p.NaturalDuration.HasTimeSpan -and $i -lt 30) "
+                "{ Start-Sleep -Milliseconds 100; $i++ }; "
+                "if ($p.NaturalDuration.HasTimeSpan) "
+                "{ Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 300) } "
+                "else { Start-Sleep -Seconds 4 }; $p.Close()"
+            )
+            return [self.player, "-NoProfile", "-NonInteractive", "-Command", script]
+        if self.player and "ffplay" in self.player:
+            return [self.player, "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)]
+        return [self.player, str(path)]
+
+    def say_cmd(self, text: str) -> list:
+        if self.platform == "win32":
+            script = ("Add-Type -AssemblyName System.Speech; "
+                      "(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak("
+                      f"{self._ps_quote(text)})")
+            return [self.player, "-NoProfile", "-NonInteractive", "-Command", script]
+        return ["say", text]
 
     @staticmethod
     async def _play(cmd):
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        # A thread instead of asyncio subprocesses: uvicorn on Windows can run a selector
+        # event loop, which doesn't support asyncio.create_subprocess_exec.
+        await asyncio.to_thread(
+            subprocess.run, cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
         )
-        await proc.wait()
 
 
 # ---------------------------------------------------------------------------
